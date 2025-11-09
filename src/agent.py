@@ -28,11 +28,11 @@ load_dotenv(".env.local")
 class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(
-            instructions="""You are a helpful voice AI assistant that can provide information about John Smith's resume. 
+            instructions="""You are a helpful voice AI assistant that can provide information about Deepak Kumar's resume. 
             The user is interacting with you via voice, even if you perceive the conversation as text.
-            You can provide information about John's education, work experience, skills, projects, and other professional details.
+            You can provide information about Deepak's education, work experience, skills, projects, and other professional details.
             Your responses should be professional, concise, and to the point, without any complex formatting or punctuation.
-            If asked about something not in the resume, politely state that you can only provide information from John Smith's resume.""",
+            If asked about something not in the resume, politely state that you can only provide information from Deepak Kumar's resume.""",
         )
         self.vector_store = None
         self.is_first_interaction = True
@@ -96,7 +96,7 @@ class Assistant(Agent):
                 self.is_first_interaction = False
                 turn_ctx.add_message(
                     role="assistant",
-                    content="Hello! I can help you learn about John Smith's professional background. What would you like to know about his experience, education, skills, or projects?"
+                    content="Hello! I can help you learn about Deepak Kumar's professional background. What would you like to know about his experience, education, skills, or projects?"
                 )
                 return
                 
@@ -110,11 +110,11 @@ class Assistant(Agent):
                 logger.info(f"No relevant information found for query: {query}")
                 turn_ctx.add_message(
                     role="assistant",
-                    content="I don't have that specific information in John's resume. You can ask about his education, work experience, skills, projects, or certifications."
+                    content="I don't have that specific information in Deepak's resume. You can ask about his education, work experience, skills, projects, or certifications."
                 )
                 return
                 
-            response = "Based on John Smith's resume:\n"
+            response = "Based on Deepak Kumar's resume:\n"
             for doc in results:
                 if doc.get('text', '').strip():
                     response += f"• {doc['text']}\n"

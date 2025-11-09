@@ -1,1 +1,126 @@
-[]
+[
+  {
+    "text": "Name: Deepak Kumar",
+    "metadata": {
+      "type": "personal",
+      "category": "name"
+    }
+  },
+  {
+    "text": "Contact: Mobile: 9868402577",
+    "metadata": {
+      "type": "personal",
+      "category": "phone"
+    }
+  },
+  {
+    "text": "Email: E-Mail: deepakdeshwal85@gmail.com",
+    "metadata": {
+      "type": "personal",
+      "category": "email"
+    }
+  },
+  {
+    "text": "Current Position: Team Lead",
+    "metadata": {
+      "type": "personal",
+      "category": "title"
+    }
+  },
+  {
+    "text": "Profile Summary: A competent professional total 11+ years of experience in IT Technologies. Abilities in handling software development life-cycle involving requirement analysis, system study, designing, coding, testing, de-bugging, project sizing, proposal preparation, status reporting & documentation. Proficient in understanding the process requirements and providing use cases for business, functional & technical requirements. Worked with the technologies like spring framework (IOC, AOP, Integration, Boot, Data JPA), Hibernate, Web services (SOAP, REST).",
+    "metadata": {
+      "type": "summary"
+    }
+  },
+  {
+    "text": "Experience: Working in Accenture as Team Lead from Apr 2015.",
+    "metadata": {
+      "type": "experience"
+    }
+  },
+  {
+    "text": "Experience: Working in Nagarro as Senior Software Engineer from Nov 2104 to Apr 2015.",
+    "metadata": {
+      "type": "experience"
+    }
+  },
+  {
+    "text": "Experience: Working in Genpact Headstrong as Senior Software Engineer from Dec 2011 to Nov 2014.",
+    "metadata": {
+      "type": "experience"
+    }
+  },
+  {
+    "text": "Experience: Working in NexGen Consultancy as Software Engineer from Dec 2009 to Dec 2011.",
+    "metadata": {
+      "type": "experience"
+    }
+  },
+  {
+    "text": "Education: MCA from U.P.T.U (2007-2010) with 68%",
+    "metadata": {
+      "type": "education"
+    }
+  },
+  {
+    "text": "Education: Post-Graduation: MCA from I.M.S College, U.P.T.U University (2007-2010) with 68%.",
+    "metadata": {
+      "type": "education"
+    }
+  },
+  {
+    "text": "Education: Graduation: BSc(H) Mathematics from Kirori Mal College, Delhi University (2003-2007) with 65%.",
+    "metadata": {
+      "type": "education"
+    }
+  },
+  {
+    "text": "Education: 10+2: CBSE (Delhi), Yr. 2003 with 74%.",
+    "metadata": {
+      "type": "education"
+    }
+  },
+  {
+    "text": "Education: 10th: CBSE (Delhi), Yr. 2001 with 76%.",
+    "metadata": {
+      "type": "education"
+    }
+  },
+  {
+    "text": "Project: Fidelity International, Team Name: Service360, Team Strength: 10 Project Description and Role: This project is to implement a solution to display and extract report of account and fund. User can show and extract account/fund holding, transactions, fund performance and many more attributes. Involved in requirement gathering, designing and development. Involved in building Rest API\u2019s using spring boot. Integrating with UI to display account/fund data. Technologies Used: Database: Oracle 12 C. ORM/Framework: Spring Data JPA Language: Java Tools: Bitbucket, Oracle SQL Developer, Eclipse, Tomcat, Bamboo.",
+    "metadata": {
+      "type": "project"
+    }
+  },
+  {
+    "text": "Project: Fidelity International, Team Name: SCV, Team Strength: 6 Project Description and Role: This is Java based solution of loading data into database from xml which is coming from MQ using JMS. Involved in requirement gathering, designing and development. Involved in building new Low Volume Pipe using Java Language. Integrating with different teams to check the compatibility of the system Technologies Used: Database: Oracle 12 C. ORM/Framework: Spring Boot, Spring Data JPA, Cloud Foundry, JMS Language: Java Tools: Bitbucket, Oracle SQL Developer, Eclipse, Tomcat, MQ Explorer, Bamboo.",
+    "metadata": {
+      "type": "project"
+    }
+  },
+  {
+    "text": "Project: \uf020 Fidelity International, Team Name: SCV, Team Strength: 6 Project Description and Role: This project is rest base webservices using spring boot, JPA and hibernate for pivotal cloud foundry. These services expose responses in Json format. Involved in requirement gathering, designing and development. Involved in building webservices. Integrating with different teams to check the compatibility of the system Technologies Used: Database: Oracle 12 C. ORM/Framework: Spring Boot, Spring Data JPA, Cloud Foundry. Language: Java Tools: Bitbucket, Oracle SQL Developer, Eclipse, Tomcat, MQ Explorer, Bamboo.",
+    "metadata": {
+      "type": "project"
+    }
+  },
+  {
+    "text": "Project: \uf020 Genpact Headstrong, Team Name: SCV, Team Strength: 4 Project Description and Role: This project is strategic post settlement operational reconciliation application for OTC derivatives cash settling products. It matches and groups journals posted to client accounts. Involved in requirement gathering, designing and development. Involved in creation of Stored Procedures and other database objects. Involved in Creation of AutoSys jobs. Technologies Used: Database: Sybase. ORM/Framework: Spring Language: Java Tools: Perforce.",
+    "metadata": {
+      "type": "project"
+    }
+  },
+  {
+    "text": "Project: \uf020 NexGen Consultancy Pvt Ltd, Team Name: SCV, Team Strength: 5 Project Description and Role: This project is deal with providing general solution for generating bills for almost all electricity boards.it comprises of initial step like meter reading collection to final steps like bill printing, deposition of bill and report generation accounts. Involved in complete requirement gathering, designing and development. Involved in creation of Stored Procedures and other database objects. Involved in Making web services using Jax ws(metro) to integrate billing module to other module which are make on different languages. Technologies Used: Database: SQL Server. ORM/Framework: Spring MVC, Hibernate, Jax WS. Language: Java PERSIONAL DETAILS",
+    "metadata": {
+      "type": "project"
+    }
+  },
+  {
+    "text": "Technical Skills: Bitbucket, Oracle SQL Developer, Eclipse, Tomcat, Bamboo., Bitbucket, Oracle SQL Developer, Eclipse, Tomcat, MQ Explorer, Bamboo., Java, Oracle 12 C., Perforce., SQL Server., Spring, Spring Boot, Spring Data JPA, Cloud Foundry, JMS, Spring Boot, Spring Data JPA, Cloud Foundry., Spring Data JPA, Spring MVC, Hibernate, Jax WS., Sybase.",
+    "metadata": {
+      "type": "skills"
+    }
+  }
+]

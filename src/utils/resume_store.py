@@ -2,6 +2,7 @@ from typing import List, Dict, Any
 from pathlib import Path
 import json
 import logging
+from docx import Document
 
 logger = logging.getLogger(__name__)
 
@@ -9,7 +10,7 @@ class ResumeVectorStore:
     def __init__(self, data_path: str = "data/knowledge_base.json"):
         """Initialize the vector store with a path to the knowledge base file."""
         self.data_path = Path(data_path)
-        self.resume_data_path = Path("data/resume_data.json")
+        self.resume_docx_path = Path("DEEPAK.docx")
         self.documents: List[Dict[str, Any]] = []
 
     async def initialize(self):
@@ -41,86 +42,180 @@ class ResumeVectorStore:
             logger.error(f"Error saving store: {e}")
 
     async def load_resume_data(self):
-        """Load the static resume data into the knowledge base."""
+        """Load the resume data from the Word document."""
         try:
-            with open(self.resume_data_path, 'r', encoding='utf-8') as f:
-                resume_data = json.load(f)
+            if not self.resume_docx_path.exists():
+                logger.error(f"Resume document not found: {self.resume_docx_path}")
+                return
+
+            doc = Document(str(self.resume_docx_path))
 
             # Clear existing documents
             self.documents = []
 
-            # Add personal info
-            personal = resume_data["personal_info"]
+            # Parse the document content
+            content_lines = []
+            for para in doc.paragraphs:
+                text = para.text.strip()
+                if text:
+                    content_lines.append(text)
+
+            # Extract personal information
+            self._extract_personal_info(content_lines)
+
+            # Extract profile summary
+            self._extract_profile_summary(content_lines)
+
+            # Extract professional experience
+            self._extract_professional_experience(content_lines)
+
+            # Extract academic details
+            self._extract_academic_details(content_lines)
+
+            # Extract projects
+            self._extract_projects(content_lines)
+
+            # Extract technical skills
+            self._extract_technical_skills(content_lines)
+
+            # Save the processed data
+            await self._save_store()
+
+            logger.info("Successfully loaded resume data from Word document")
+
+        except Exception as e:
+            logger.error(f"Error loading resume data from Word document: {e}")
+            self.documents = []
+
+    def _extract_personal_info(self, content_lines: List[str]):
+        """Extract personal information from the document."""
+        for line in content_lines[:10]:  # Check first few lines
+            if 'Deepak' in line and 'Kumar' in line:
+                self.add_document(
+                    text=f"Name: {line.strip()}",
+                    metadata={"type": "personal", "category": "name"}
+                )
+            elif 'Mobile:' in line or 'Phone:' in line:
+                self.add_document(
+                    text=f"Contact: {line.strip()}",
+                    metadata={"type": "personal", "category": "phone"}
+                )
+            elif 'E-Mail:' in line or 'Email:' in line:
+                self.add_document(
+                    text=f"Email: {line.strip()}",
+                    metadata={"type": "personal", "category": "email"}
+                )
+            elif 'Team Lead' in line or any(title in line for title in ['Software Engineer', 'Senior Software Engineer']):
+                self.add_document(
+                    text=f"Current Position: {line.strip()}",
+                    metadata={"type": "personal", "category": "title"}
+                )
+
+    def _extract_profile_summary(self, content_lines: List[str]):
+        """Extract profile summary from the document."""
+        in_summary = False
+        summary_lines = []
+
+        for line in content_lines:
+            if 'PROFILE SUMMARY' in line:
+                in_summary = True
+                continue
+            elif in_summary and line.startswith(('PROFESSIONAL EXPERIENCE', 'TECHINAL PURVIEW', 'ACADEMIC DETAILS')):
+                break
+            elif in_summary:
+                summary_lines.append(line)
+
+        if summary_lines:
+            summary_text = ' '.join(summary_lines)
             self.add_document(
-                text=f"{personal['name']} - {personal['title']}",
-                metadata={"type": "header"}
-            )
-            self.add_document(
-                text=f"Contact: {personal['email']} | {personal['phone']} | {personal['location']}",
-                metadata={"type": "contact"}
-            )
-            self.add_document(
-                text=personal['summary'],
+                text=f"Profile Summary: {summary_text}",
                 metadata={"type": "summary"}
             )
 
-            # Add education
-            for edu in resume_data["education"]:
+    def _extract_professional_experience(self, content_lines: List[str]):
+        """Extract professional experience from the document."""
+        in_experience = False
+
+        for line in content_lines:
+            if 'PROFESSIONAL EXPERIENCE' in line:
+                in_experience = True
+                continue
+            elif in_experience and line.startswith(('ACADEMIC DETAILS', 'PROJECTS')):
+                break
+            elif in_experience and ('Working in' in line or 'from' in line and 'to' in line):
                 self.add_document(
-                    text=f"{edu['degree']} from {edu['institution']}, {edu['location']} ({edu['year']})",
+                    text=f"Experience: {line.strip()}",
+                    metadata={"type": "experience"}
+                )
+
+    def _extract_academic_details(self, content_lines: List[str]):
+        """Extract academic details from the document."""
+        in_academic = False
+
+        for line in content_lines:
+            if 'ACADEMIC DETAILS' in line:
+                in_academic = True
+                continue
+            elif in_academic and line.startswith(('PROJECTS', 'PERSONAL DETAILS')):
+                break
+            elif in_academic and ('MCA' in line or 'BSc' in line or '10+' in line or '10th' in line):
+                self.add_document(
+                    text=f"Education: {line.strip()}",
                     metadata={"type": "education"}
                 )
 
-            # Add experience
-            for exp in resume_data["experience"]:
-                self.add_document(
-                    text=f"{exp['title']} at {exp['company']}, {exp['location']} ({exp['period']})",
-                    metadata={"type": "experience_header"}
-                )
-                for resp in exp["responsibilities"]:
-                    self.add_document(
-                        text=resp,
-                        metadata={"type": "experience_detail"}
-                    )
+    def _extract_projects(self, content_lines: List[str]):
+        """Extract project information from the document."""
+        in_projects = False
+        current_project = []
 
-            # Add skills
-            for category, skills in resume_data["skills"].items():
-                self.add_document(
-                    text=f"{category.replace('_', ' ').title()}: {', '.join(skills)}",
-                    metadata={"type": "skills"}
-                )
+        for line in content_lines:
+            if 'PROJECTS' in line:
+                in_projects = True
+                continue
+            elif in_projects and line.startswith('PERSONAL DETAILS'):
+                break
+            elif in_projects:
+                if 'Fidelity International' in line or 'Genpact Headstrong' in line or 'NexGen Consultancy' in line:
+                    # Save previous project if exists
+                    if current_project:
+                        project_text = ' '.join(current_project)
+                        self.add_document(
+                            text=f"Project: {project_text}",
+                            metadata={"type": "project"}
+                        )
+                    current_project = [line]
+                elif current_project:
+                    current_project.append(line)
 
-            # Add projects
-            for project in resume_data["projects"]:
-                self.add_document(
-                    text=f"Project: {project['name']} - {project['description']}",
-                    metadata={"type": "project"}
-                )
-                self.add_document(
-                    text=f"Technologies: {', '.join(project['technologies'])}",
-                    metadata={"type": "project_tech"}
-                )
+        # Save last project
+        if current_project:
+            project_text = ' '.join(current_project)
+            self.add_document(
+                text=f"Project: {project_text}",
+                metadata={"type": "project"}
+            )
 
-            # Add certifications
-            for cert in resume_data["certifications"]:
-                self.add_document(
-                    text=f"{cert['name']} ({cert['issuer']}, {cert['year']})",
-                    metadata={"type": "certification"}
-                )
+    def _extract_technical_skills(self, content_lines: List[str]):
+        """Extract technical skills from the document."""
+        # Look for technologies mentioned in projects
+        technologies = set()
 
-            # Add languages
-            for lang in resume_data["languages"]:
-                self.add_document(
-                    text=f"{lang['language']}: {lang['proficiency']}",
-                    metadata={"type": "language"}
-                )
+        for line in content_lines:
+            if 'Technologies Used:' in line:
+                continue
+            elif 'Database:' in line or 'ORM/Framework:' in line or 'Language:' in line or 'Tools:' in line:
+                tech_info = line.split(':', 1)
+                if len(tech_info) > 1:
+                    tech_list = tech_info[1].strip()
+                    technologies.add(tech_list)
 
-            logger.info("Successfully loaded resume data into knowledge base")
-            self._save_store()
-            
-        except Exception as e:
-            logger.error(f"Error loading resume data: {str(e)}")
-            raise
+        if technologies:
+            tech_text = ', '.join(sorted(technologies))
+            self.add_document(
+                text=f"Technical Skills: {tech_text}",
+                metadata={"type": "skills"}
+            )
 
     def add_document(self, text: str, metadata: Dict[str, Any] = None):
         """Add a document to the knowledge base with optional metadata."""
