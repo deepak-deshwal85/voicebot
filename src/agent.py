@@ -18,7 +18,7 @@ from livekit.agents import (
 )
 from livekit.plugins import noise_cancellation, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
-from utils.resume_store import ResumeVectorStore
+from utils.knowledge_store import KnowledgeStore
 
 logger = logging.getLogger("agent")
 
@@ -28,11 +28,11 @@ load_dotenv(".env.local")
 class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(
-            instructions="""You are a helpful voice AI assistant that can provide information about Deepak Kumar's resume. 
+            instructions="""You are a helpful voice AI assistant that provides information about Fidelity UK.
             The user is interacting with you via voice, even if you perceive the conversation as text.
-            You can provide information about Deepak's education, work experience, skills, projects, and other professional details.
+            You can provide information about Fidelity UK's services, investment options, financial products, and company information.
             Your responses should be professional, concise, and to the point, without any complex formatting or punctuation.
-            If asked about something not in the resume, politely state that you can only provide information from Deepak Kumar's resume.""",
+            If asked about something not available on the Fidelity UK website, politely state that you can only provide information from their official website.""",
         )
         self.vector_store = None
         self.is_first_interaction = True
@@ -50,7 +50,7 @@ class Assistant(Agent):
         self._initializing = True
         try:
             logger.info("Initializing vector store...")
-            self.vector_store = ResumeVectorStore()
+            self.vector_store = KnowledgeStore()
             await asyncio.wait_for(self.vector_store.initialize(), timeout=60)
             logger.info("Vector store initialized successfully.")
             return True
@@ -66,9 +66,10 @@ class Assistant(Agent):
             self._initializing = False
     
     async def initialize(self) -> None:
-        """Initialize the agent and load resume data."""
+        """Initialize the agent."""
         await super().initialize()
-        await self._ensure_vector_store()
+        # Don't initialize vector store here to avoid timeout during worker startup
+        # It will be initialized lazily when first needed
         
     async def on_session_started(self, session: AgentSession) -> None:
         """Called when a new session starts."""
@@ -96,7 +97,7 @@ class Assistant(Agent):
                 self.is_first_interaction = False
                 turn_ctx.add_message(
                     role="assistant",
-                    content="Hello! I can help you learn about Deepak Kumar's professional background. What would you like to know about his experience, education, skills, or projects?"
+                    content="Hello! I can help you learn about Fidelity UK. What would you like to know about their investment services, financial products, or company information?"
                 )
                 return
                 
@@ -105,20 +106,20 @@ class Assistant(Agent):
             if not query:
                 return
                 
-            results = self.vector_store.search(query, top_k=3)
+            results = await self.vector_store.search_with_fallback(query, top_k=3)
             if not results:
                 logger.info(f"No relevant information found for query: {query}")
                 turn_ctx.add_message(
                     role="assistant",
-                    content="I don't have that specific information in Deepak's resume. You can ask about his education, work experience, skills, projects, or certifications."
+                    content="I don't have that specific information on the Fidelity UK website. You can ask about their investment services, financial products, or company information."
                 )
                 return
-                
-            response = "Based on Deepak Kumar's resume:\n"
+
+            response = "Based on Fidelity UK's website:\n"
             for doc in results:
                 if doc.get('text', '').strip():
                     response += f"• {doc['text']}\n"
-                    
+
             turn_ctx.add_message(
                 role="assistant",
                 content=response.strip()
@@ -127,61 +128,58 @@ class Assistant(Agent):
             logger.error(f"Error handling user message: {str(e)}", exc_info=True)
             turn_ctx.add_message(
                 role="assistant",
-                content="I apologize, but I encountered an error while accessing the resume information. Please try asking your question again."
+                content="I apologize, but I encountered an error while accessing the Fidelity UK website information. Please try asking your question again."
             )
 
     from livekit.agents import function_tool, RunContext
 
     @function_tool()
     async def update_website_content(self, context: RunContext, max_pages: int = 10):
-        """Update the knowledge base with fresh content from the Fidelity International website.
+        """Update the knowledge base with fresh content from the Fidelity UK website.
 
         Args:
             max_pages: Maximum number of pages to scrape (default: 10)
         """
-        logger.info("Updating content from Fidelity International website...")
-        self.vector_store.scrape_website(max_pages=max_pages)
+        logger.info("Updating content from Fidelity UK website...")
+        await self.vector_store.scrape_website(max_pages=max_pages)
         return "Website content updated successfully."
 
     @function_tool()
     async def search_website(self, context: RunContext, query: str, top_k: int = 3):
-        """Search for information from the Allahabad High Court website.
+        """Search for information from Fidelity UK website if not found in resume.
 
         Args:
             query: The search query
             top_k: Number of top results to return (default: 3)
         """
-        logger.info(f"Searching Allahabad High Court content for: {query}")
-        results = self.vector_store.search(query, top_k)
+        logger.info(f"Searching for information: {query}")
+        results = await self.vector_store.search_with_fallback(query, top_k)
         if not results:
-            return "I couldn't find specific information about that on the Allahabad High Court website. Please visit the official court website or consult with a legal professional for the most accurate information."
-        
-        response = "Based on the Allahabad High Court website:\n\n"
+            return "I couldn't find specific information about that on the Fidelity UK website. Please try rephrasing your question or ask about their investment services, financial products, or company information."
+
+        response = "Here's what I found on Fidelity UK's website:\n\n"
         for result in results:
-            response += f"• {result['text']}"
-            if result['url']:
-                response += f" (Source: {result['url']})"
-            response += "\n"
-        
-        response += "\nPlease note: This information is from the Allahabad High Court website. For the most current information or specific legal advice, please visit the official website or consult with a legal professional."
+            response += f"• {result['text']}\n"
+
+        response += "\nPlease note: This information is for general reference. For specific financial advice, please consult with a financial professional."
         return response
         
     @function_tool()
-    async def refresh_resume(self, context: RunContext):
-        """Refresh the resume data in the vector store."""
+    async def refresh_website_content(self, context: RunContext):
+        """Refresh the website content in the vector store."""
         # Ensure vector store is initialized
         if not await self._ensure_vector_store():
             logger.error("Vector store not initialized")
             return "I'm sorry, but my knowledge base is not ready yet. Please try again later."
 
         try:
-            logger.info("Refreshing resume data...")
-            await self.vector_store.load_resume_data()
-            logger.info("Resume data refreshed successfully.")
-            return "Resume data has been refreshed successfully."
+            logger.info("Refreshing website content...")
+            await self.vector_store.scrape_website(max_pages=20)
+            logger.info("Website content refreshed successfully.")
+            return "Website content has been refreshed successfully."
         except Exception as e:
-            logger.error(f"Error refreshing resume data: {e}")
-            return "An error occurred while refreshing the resume data. Please try again later."
+            logger.error(f"Error refreshing website content: {e}")
+            return "An error occurred while refreshing the website content. Please try again later."
 
 
 def prewarm(proc: JobProcess):
@@ -202,7 +200,7 @@ async def entrypoint(ctx: JobContext):
         stt=inference.STT(model="assemblyai/universal-streaming", language="en"),
         # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
         # See all available models at https://docs.livekit.io/agents/models/llm/
-        llm=inference.LLM(model="openai/gpt-4.1-mini"),
+        llm=inference.LLM(model="openai/gpt-4o-mini"),
         # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
         # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
         tts=inference.TTS(
@@ -212,9 +210,8 @@ async def entrypoint(ctx: JobContext):
         # See more at https://docs.livekit.io/agents/build/turns
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
-        # allow the LLM to generate a response while waiting for the end of turn
-        # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
-        preemptive_generation=True,
+        # Disable preemptive generation to reduce initialization complexity
+        preemptive_generation=False,
     )
 
     # To use a realtime model instead of a voice pipeline, use the following session setup instead.
@@ -265,4 +262,11 @@ async def entrypoint(ctx: JobContext):
 
 
 if __name__ == "__main__":
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))
+    cli.run_app(
+        WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            prewarm_fnc=prewarm,
+            # Increase initialization timeout
+            initialize_process_timeout=120.0,
+        )
+    )
