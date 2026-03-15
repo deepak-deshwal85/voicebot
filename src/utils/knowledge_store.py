@@ -14,7 +14,7 @@ class KnowledgeStore:
     def __init__(self, data_path: str = "data/knowledge_base.json"):
         """Initialize the vector store with a path to the knowledge base file."""
         self.data_path = Path(data_path)
-        self.website_url = "https://www.fidelity.co.uk/"
+        self.website_url = "https://www.allahabadhighcourt.in/"
         self.documents: List[Dict[str, Any]] = []
         self.scraped_pages: set = set()  # Track scraped URLs to avoid duplicates
 

@@ -56,3 +56,10 @@ tasks:
     interactive: true
     cmds:
       - "uv run src/agent.py dev"
+
+  outbound-call:
+    desc: "Place an outbound call to +919868402577"
+    vars:
+      PHONE: '{{default "+919868402577" .PHONE}}'
+    cmds:
+      - "uv run scripts/outbound_call.py {{.PHONE}}"

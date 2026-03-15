@@ -111,6 +111,8 @@ Get started quickly with our pre-built frontend starter apps, or add telephony s
 
 For advanced customization, see the [complete frontend guide](https://docs.livekit.io/agents/start/frontend/).
 
+For Vobiz SIP number integration, see [docs/vobiz-telephony-integration.md](docs/vobiz-telephony-integration.md).
+
 ## Tests and evals
 
 This project includes a complete suite of evals, based on the LiveKit Agents [testing & evaluation framework](https://docs.livekit.io/agents/build/testing/). To run them, use `pytest`.
