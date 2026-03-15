@@ -63,3 +63,10 @@ tasks:
       PHONE: '{{default "+919868402577" .PHONE}}'
     cmds:
       - "uv run scripts/outbound_call.py {{.PHONE}}"
+
+  refresh-knowledge:
+    desc: "On-demand website knowledge refresh"
+    vars:
+      MAX_PAGES: '{{default "100" .MAX_PAGES}}'
+    cmds:
+      - "uv run scripts/refresh_knowledge_base.py --max-pages {{.MAX_PAGES}}"

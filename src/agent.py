@@ -43,6 +43,24 @@ class Assistant(Agent):
             )
         )
 
+    async def preload_knowledge(self, max_pages: int, force_refresh: bool) -> bool:
+        if self.vector_store is None:
+            self.vector_store = KnowledgeStore()
+
+        try:
+            await asyncio.wait_for(
+                self.vector_store.initialize(
+                    preload_website=True,
+                    max_pages=max_pages,
+                    force_refresh=force_refresh,
+                ),
+                timeout=600,
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to preload knowledge store: {e}", exc_info=True)
+            return False
+
     async def _ensure_vector_store(self) -> bool:
         if self.vector_store is not None:
             return True
@@ -84,7 +102,7 @@ class Assistant(Agent):
             return
 
         try:
-            results = await self.vector_store.search_with_fallback(query, top_k=3)
+            results = await self.vector_store.search(query, top_k=3)
             if not results:
                 turn_ctx.add_message(
                     role="assistant",
@@ -122,7 +140,7 @@ class Assistant(Agent):
         if not await self._ensure_vector_store():
             return "Knowledge base is not ready. Please try again shortly."
 
-        results = await self.vector_store.search_with_fallback(query, top_k)
+        results = await self.vector_store.search(query, top_k)
         if not results:
             return (
                 "I couldn't find specific information about that. "
@@ -154,6 +172,13 @@ def prewarm(proc: JobProcess):
 async def entrypoint(ctx: JobContext):
     ctx.log_context_fields = {"room": ctx.room.name}
 
+    preload_max_pages = int(os.getenv("KNOWLEDGE_PRELOAD_MAX_PAGES", "100"))
+    force_refresh = os.getenv("KNOWLEDGE_FORCE_REFRESH", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
     telephony_mode = os.getenv("TELEPHONY_MODE", "auto").strip().lower()
     telephony_noise_cancellation = getattr(noise_cancellation, "BVCTelephony", None)
     selected_noise_cancellation = (
@@ -173,8 +198,14 @@ async def entrypoint(ctx: JobContext):
         preemptive_generation=False,
     )
 
+    assistant = Assistant()
+    await assistant.preload_knowledge(
+        max_pages=preload_max_pages,
+        force_refresh=force_refresh,
+    )
+
     await session.start(
-        agent=Assistant(),
+        agent=assistant,
         room=ctx.room,
         room_input_options=RoomInputOptions(
             noise_cancellation=selected_noise_cancellation,
