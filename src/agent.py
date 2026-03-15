@@ -199,9 +199,14 @@ async def entrypoint(ctx: JobContext):
     )
 
     assistant = Assistant()
-    await assistant.preload_knowledge(
-        max_pages=preload_max_pages,
-        force_refresh=force_refresh,
+
+    # Connect to the room, then run knowledge preload and wait-for-participant
+    # concurrently: knowledge loads while the user's phone rings (outbound) or
+    # while the session is setting up (inbound).
+    await ctx.connect()
+    await asyncio.gather(
+        assistant.preload_knowledge(max_pages=preload_max_pages, force_refresh=force_refresh),
+        ctx.wait_for_participant(),
     )
 
     await session.start(
