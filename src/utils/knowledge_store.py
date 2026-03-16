@@ -104,10 +104,11 @@ class KnowledgeStore:
             return []
 
         query_words = set(query.lower().split())
-        # Build prefix keys for longer query words to catch STT mis-transcriptions.
-        # e.g. "juniorized"[:6] == "junior" matches "junior isa" docs.
+        # Prefix matching for longer words (handles STT truncations e.g. "juniorized" → "junior")
         prefix_len = 6
         query_prefixes = {w[:prefix_len] for w in query_words if len(w) > prefix_len}
+        # Short words (≤5 chars) get edit-distance-1 fuzzy matching (handles "ifa" → "isa")
+        short_query_words = {w for w in query_words if len(w) <= 5}
 
         scored_docs: list[tuple[float, dict[str, Any]]] = []
 
@@ -117,7 +118,7 @@ class KnowledgeStore:
             exact = query_words & doc_words
             score = float(len(exact))
 
-            # Prefix overlap for unmatched words (half weight) — handles STT errors
+            # Prefix overlap for unmatched longer words (half weight)
             if query_prefixes:
                 unmatched_prefixes = {
                     w[:prefix_len] for w in query_words - exact if len(w) > prefix_len
@@ -125,6 +126,15 @@ class KnowledgeStore:
                 for dw in doc_words:
                     if dw[:prefix_len] in unmatched_prefixes:
                         score += 0.5
+
+            # Edit-distance-1 fuzzy match for short unmatched words (half weight)
+            unmatched_short = short_query_words - exact
+            if unmatched_short:
+                for dw in doc_words:
+                    for qw in unmatched_short:
+                        if KnowledgeStore._edit_distance_1(qw, dw):
+                            score += 0.5
+                            break
 
             if score > 0:
                 scored_docs.append(
@@ -140,6 +150,30 @@ class KnowledgeStore:
 
         scored_docs.sort(key=lambda x: x[0], reverse=True)
         return [doc for _, doc in scored_docs[:top_k]]
+
+    @staticmethod
+    def _edit_distance_1(a: str, b: str) -> bool:
+        """Return True if strings a and b differ by at most 1 edit (substitute/insert/delete)."""
+        if a == b:
+            return False  # identical → already handled by exact match
+        la, lb = len(a), len(b)
+        if abs(la - lb) > 1:
+            return False
+        if la == lb:
+            return sum(c1 != c2 for c1, c2 in zip(a, b)) == 1
+        # One insertion/deletion
+        short, long_ = (a, b) if la < lb else (b, a)
+        i = j = diffs = 0
+        while i < len(short) and j < len(long_):
+            if short[i] != long_[j]:
+                diffs += 1
+                j += 1
+                if diffs > 1:
+                    return False
+            else:
+                i += 1
+                j += 1
+        return True
 
     async def scrape_website(self, max_pages: int = 10) -> None:
         try:
