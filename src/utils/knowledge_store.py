@@ -104,11 +104,28 @@ class KnowledgeStore:
             return []
 
         query_words = set(query.lower().split())
-        scored_docs: list[tuple[int, dict[str, Any]]] = []
+        # Build prefix keys for longer query words to catch STT mis-transcriptions.
+        # e.g. "juniorized"[:6] == "junior" matches "junior isa" docs.
+        prefix_len = 6
+        query_prefixes = {w[:prefix_len] for w in query_words if len(w) > prefix_len}
+
+        scored_docs: list[tuple[float, dict[str, Any]]] = []
 
         for doc in self.documents:
             doc_words = set(doc["text"].lower().split())
-            score = len(query_words.intersection(doc_words))
+            # Exact keyword overlap (full weight)
+            exact = query_words & doc_words
+            score = float(len(exact))
+
+            # Prefix overlap for unmatched words (half weight) — handles STT errors
+            if query_prefixes:
+                unmatched_prefixes = {
+                    w[:prefix_len] for w in query_words - exact if len(w) > prefix_len
+                }
+                for dw in doc_words:
+                    if dw[:prefix_len] in unmatched_prefixes:
+                        score += 0.5
+
             if score > 0:
                 scored_docs.append(
                     (
