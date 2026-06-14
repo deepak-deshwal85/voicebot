@@ -57,21 +57,19 @@ jobs:
         run: uv run python scripts/knowledge.py validate --client "${{ matrix.client }}"
 
       - name: Download agent models
+        env:
+          CLIENT_ID: ${{ matrix.client }}
+          AGENT_CONFIG_PATH: config/clients/${{ matrix.client }}/agent.properties
         run: uv run python src/agent.py download-files
 
-      - name: Install LiveKit CLI
-        run: curl -sSL https://get.livekit.io | bash
-
       - name: Deploy to LiveKit Cloud
+        uses: livekit/deploy-action@v2.12.1
         env:
           LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}
           LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
           LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
           CLIENT_ID: ${{ matrix.client }}
           AGENT_CONFIG_PATH: config/clients/${{ matrix.client }}/agent.properties
-        run: |
-          lk cloud auth \
-            --url "$LIVEKIT_URL" \
-            --api-key "$LIVEKIT_API_KEY" \
-            --api-secret "$LIVEKIT_API_SECRET"
-          lk agent deploy
+        with:
+          OPERATION: deploy
+          WORKING_DIRECTORY: .

@@ -250,7 +250,7 @@ Refreshed JSON files are uploaded as workflow artifacts.
 2. Open **Actions → Deploy Agent → Run workflow**
 3. Choose `client-1`, `client-2`, or `all`
 
-Each deployment sets `CLIENT_ID` and `AGENT_CONFIG_PATH` for that client before running `lk agent deploy`.
+Each deployment uses the official [livekit/deploy-action](https://github.com/livekit/deploy-action) and sets `CLIENT_ID` and `AGENT_CONFIG_PATH` for the selected client.
 
 Register separate agents in LiveKit Cloud for each client name (for example `client-1-voice-agent` and `client-2-voice-agent`).
 
