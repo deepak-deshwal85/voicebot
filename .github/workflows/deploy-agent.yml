@@ -73,7 +73,7 @@ jobs:
       - name: Install LiveKit CLI
         run: |
           curl -sSL https://get.livekit.io/cli | bash
-          lk version
+          lk --version
 
       - name: Deploy to LiveKit Cloud
         env:
