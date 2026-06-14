@@ -23,9 +23,8 @@ jobs:
           echo "Disable this test and commit the file once you have cloned this repo for your own use"
           exit 1
         fi
-        if git ls-files | grep -q "^livekit\.toml$"; then
-          echo "Error: livekit.toml should not be checked into git"
-          echo "Disable this test and commit the file once you have cloned this repo for your own use"
-          exit 1
+        if ! git ls-files | grep -q "^livekit\.toml$"; then
+          echo "Warning: livekit.toml is not tracked in git"
+          echo "Commit livekit.toml so LiveKit Cloud deploy can read the agent id"
         fi
-        echo "✓ uv.lock and livekit.toml are correctly not tracked in git" 
+        echo "Template check completed" 

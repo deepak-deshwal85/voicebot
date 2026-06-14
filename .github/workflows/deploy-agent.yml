@@ -34,8 +34,16 @@ jobs:
       fail-fast: false
       matrix:
         client: ${{ fromJSON(needs.resolve-clients.outputs.clients) }}
+    concurrency:
+      group: deploy-${{ matrix.client }}-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify livekit.toml is present
+        run: |
+          test -f livekit.toml
+          grep -q 'id = ' livekit.toml
 
       - name: Install uv
         uses: astral-sh/setup-uv@v1
@@ -62,14 +70,28 @@ jobs:
           AGENT_CONFIG_PATH: config/clients/${{ matrix.client }}/agent.properties
         run: uv run python src/agent.py download-files
 
+      - name: Install LiveKit CLI
+        run: |
+          curl -sSL https://get.livekit.io/cli | bash
+          lk version
+
       - name: Deploy to LiveKit Cloud
-        uses: livekit/deploy-action@v2.12.1
         env:
           LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}
           LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
           LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           CLIENT_ID: ${{ matrix.client }}
           AGENT_CONFIG_PATH: config/clients/${{ matrix.client }}/agent.properties
-        with:
-          OPERATION: deploy
-          WORKING_DIRECTORY: .
+        run: |
+          lk project add github-ci \
+            --url "$LIVEKIT_URL" \
+            --api-key "$LIVEKIT_API_KEY" \
+            --api-secret "$LIVEKIT_API_SECRET" \
+            --default || true
+
+          lk agent deploy \
+            --secrets "OPENAI_API_KEY=${OPENAI_API_KEY}" \
+            --secrets "CLIENT_ID=${CLIENT_ID}" \
+            --secrets "AGENT_CONFIG_PATH=${AGENT_CONFIG_PATH}" \
+            --secrets "EMBEDDING_MODEL=text-embedding-3-small"

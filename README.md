@@ -222,7 +222,7 @@ Workflows live in `.github/workflows/`.
 |----------|---------|---------|
 | **CI** (`ci.yml`) | Push / PR to `main` | Ruff lint, pytest, client config validation |
 | **Knowledge Refresh** (`knowledge-refresh.yml`) | Manual | Rebuild website/PDF knowledge for `client-1`, `client-2`, or `all` |
-| **Deploy Agent** (`deploy-agent.yml`) | Manual | Deploy one or all clients to LiveKit Cloud |
+| **Deploy Agent** (`deploy-agent.yml`) | Manual | Deploy one or all clients with `lk agent deploy` |
 
 ### GitHub repository secrets
 
@@ -246,11 +246,17 @@ Refreshed JSON files are uploaded as workflow artifacts.
 
 ### Deploy a client agent
 
-1. Ensure knowledge stores are built (`knowledge.py validate --client client-1`)
-2. Open **Actions → Deploy Agent → Run workflow**
-3. Choose `client-1`, `client-2`, or `all`
+1. Ensure `livekit.toml` is **committed to git** (must contain your agent `id`).
+2. Ensure knowledge stores are built (`knowledge.py validate --client client-1`).
+3. Add GitHub secrets: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `OPENAI_API_KEY`.
+4. Open **Actions → Deploy Agent → Run workflow** and choose `client-1`, `client-2`, or `all`.
 
-Each deployment uses the official [livekit/deploy-action](https://github.com/livekit/deploy-action) and sets `CLIENT_ID` and `AGENT_CONFIG_PATH` for the selected client.
+The deploy workflow installs the LiveKit CLI and runs `lk agent deploy` with these runtime secrets:
+
+- `OPENAI_API_KEY`
+- `CLIENT_ID`
+- `AGENT_CONFIG_PATH`
+- `EMBEDDING_MODEL`
 
 Register separate agents in LiveKit Cloud for each client name (for example `client-1-voice-agent` and `client-2-voice-agent`).
 
