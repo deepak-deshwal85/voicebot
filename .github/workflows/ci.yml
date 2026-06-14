@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: UV_GIT_LFS=1 uv sync --dev
+
+      - name: Run ruff linter
+        run: uv run ruff check .
+
+      - name: Run ruff formatter
+        run: uv run ruff format --check .
+
+  test:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: UV_GIT_LFS=1 uv sync --dev
+
+      - name: Run tests
+        env:
+          LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}
+          LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
+          LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
+        run: uv run pytest -v
+
+  validate-clients:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: UV_GIT_LFS=1 uv sync --dev
+
+      - name: List configured clients
+        run: uv run python scripts/knowledge.py list-clients
+
+      - name: Validate client configs
+        env:
+          PYTHONPATH: src
+        run: |
+          uv run python - <<'PY'
+          from utils.config import list_client_ids, load_agent_config
+
+          for client_id in list_client_ids():
+              config = load_agent_config(client_id=client_id)
+              assert config.client_id == client_id
+              assert config.agent_name
+              assert config.knowledge_website_path.name == "knowledge_website.json"
+              assert str(config.pdf_folder).endswith(client_id)
+              print(f"OK {client_id} -> {config.agent_name}")
+          PY

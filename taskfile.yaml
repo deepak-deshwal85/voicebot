@@ -65,8 +65,28 @@ tasks:
       - "uv run scripts/outbound_call.py {{.PHONE}}"
 
   refresh-knowledge:
-    desc: "Rebuild knowledge base from website and PDF documents"
+    desc: "Rebuild knowledge base for default client"
     vars:
+      CLIENT: '{{default "client-1" .CLIENT}}'
       MAX_PAGES: '{{default "100" .MAX_PAGES}}'
     cmds:
-      - "uv run scripts/refresh_knowledge_base.py --max-pages {{.MAX_PAGES}}"
+      - "uv run python scripts/knowledge.py refresh all --client {{.CLIENT}} --max-pages {{.MAX_PAGES}}"
+
+  kb-status:
+    desc: "Show knowledge base status for a client"
+    vars:
+      CLIENT: '{{default "client-1" .CLIENT}}'
+    cmds:
+      - "uv run python scripts/knowledge.py status --client {{.CLIENT}}"
+
+  kb-validate:
+    desc: "Validate knowledge stores for a client"
+    vars:
+      CLIENT: '{{default "client-1" .CLIENT}}'
+    cmds:
+      - "uv run python scripts/knowledge.py validate --client {{.CLIENT}}"
+
+  kb-clients:
+    desc: "List configured clients"
+    cmds:
+      - "uv run python scripts/knowledge.py list-clients"

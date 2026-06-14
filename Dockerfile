@@ -50,6 +50,10 @@ RUN uv sync --locked
 # (Excludes files specified in .dockerignore)
 COPY . .
 
+ARG CLIENT_ID=client-1
+ENV CLIENT_ID=${CLIENT_ID}
+ENV AGENT_CONFIG_PATH=config/clients/${CLIENT_ID}/agent.properties
+
 # Change ownership of all app files to the non-privileged user
 # This ensures the application can read/write files as needed
 RUN chown -R appuser:appuser /app

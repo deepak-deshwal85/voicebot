@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import json
@@ -25,101 +25,150 @@ class KnowledgeStore:
 
     def __init__(self, config: AgentConfig | None = None) -> None:
         self.config = config or load_agent_config()
-        self.data_path = self.config.knowledge_data_path
+        self.website_path = self.config.knowledge_website_path
+        self.pdfs_path = self.config.knowledge_pdfs_path
         self.website_url = self.config.website_url
-        self.documents: list[dict[str, Any]] = []
+        self.website_documents: list[dict[str, Any]] = []
+        self.pdf_documents: list[dict[str, Any]] = []
         self.scraped_pages: set[str] = set()
         self.embedding_model = self.config.embedding_model
         self.embeddings = EmbeddingService(model=self.embedding_model)
 
+    @property
+    def documents(self) -> list[dict[str, Any]]:
+        return self.website_documents + self.pdf_documents
+
     async def initialize(self) -> None:
-        """Load the pre-built knowledge base. No scraping at runtime."""
-        logger.info("Initializing knowledge store from %s", self.data_path)
-        await self._load_or_create_store()
+        """Load pre-built website and PDF knowledge stores. No scraping at runtime."""
+        await self._migrate_legacy_store_if_needed()
+        self.website_documents = await self._load_store_file(self.website_path)
+        self.pdf_documents = await self._load_store_file(self.pdfs_path)
+        self._restore_scraped_pages()
         logger.info(
-            "Knowledge store initialized with %s documents", len(self.documents)
+            "Knowledge store loaded: %s website + %s PDF chunks",
+            len(self.website_documents),
+            len(self.pdf_documents),
         )
 
     async def rebuild(
         self,
         max_pages: int | None = None,
-        force_refresh: bool = True,
         include_website: bool = True,
         include_pdfs: bool = True,
     ) -> None:
-        """Build the knowledge base from website content and PDF documents."""
+        """Rebuild one or both knowledge stores without affecting the other source."""
         page_limit = max_pages or self.config.max_pages
 
-        if force_refresh:
-            self.documents = []
-            self.scraped_pages = set()
-
-        if include_pdfs:
-            await self.ingest_pdfs()
+        if include_website and not include_pdfs:
+            self.pdf_documents = await self._load_store_file(self.pdfs_path)
+        elif include_pdfs and not include_website:
+            self.website_documents = await self._load_store_file(self.website_path)
 
         if include_website:
-            await self.scrape_website(max_pages=page_limit)
+            await self._rebuild_website(max_pages=page_limit)
 
-        await self._compute_embeddings()
-        await self._save_store()
+        if include_pdfs:
+            await self._rebuild_pdfs()
+
         logger.info(
-            "Knowledge base rebuilt with %s documents from website and PDFs",
-            len(self.documents),
+            "Knowledge stores rebuilt: %s website + %s PDF chunks",
+            len(self.website_documents),
+            len(self.pdf_documents),
         )
 
-    async def _load_or_create_store(self) -> None:
+    async def _rebuild_website(self, max_pages: int) -> None:
+        self.website_documents = []
+        self.scraped_pages = set()
+        await self.scrape_website(max_pages=max_pages)
+        await self._compute_embeddings(self.website_documents)
+        await self._save_store_file(
+            self.website_path,
+            self.website_documents,
+            source="website",
+        )
+
+    async def _rebuild_pdfs(self) -> None:
+        self.pdf_documents = []
+        await self.ingest_pdfs()
+        await self._compute_embeddings(self.pdf_documents)
+        await self._save_store_file(self.pdfs_path, self.pdf_documents, source="pdf")
+
+    async def _migrate_legacy_store_if_needed(self) -> None:
+        legacy_path = self.config.legacy_knowledge_path
+        if self.website_path.exists() and self.pdfs_path.exists():
+            return
+        if not legacy_path.exists():
+            return
+
+        logger.info("Migrating legacy knowledge base from %s", legacy_path)
+        documents = await self._load_store_file(legacy_path)
+        website_docs = [
+            doc
+            for doc in documents
+            if doc.get("metadata", {}).get("source") == "website"
+        ]
+        pdf_docs = [
+            doc for doc in documents if doc.get("metadata", {}).get("source") == "pdf"
+        ]
+
+        if not self.website_path.exists() and website_docs:
+            await self._save_store_file(
+                self.website_path, website_docs, source="website"
+            )
+            logger.info("Migrated %s website chunks", len(website_docs))
+
+        if not self.pdfs_path.exists() and pdf_docs:
+            await self._save_store_file(self.pdfs_path, pdf_docs, source="pdf")
+            logger.info("Migrated %s PDF chunks", len(pdf_docs))
+
+    async def _load_store_file(self, path: Path) -> list[dict[str, Any]]:
+        if not path.exists():
+            return []
+
         try:
-            if self.data_path.exists():
-                with open(self.data_path, encoding="utf-8") as handle:
-                    payload = json.load(handle)
+            with open(path, encoding="utf-8") as handle:
+                payload = json.load(handle)
 
-                if isinstance(payload, list):
-                    self.documents = payload
-                elif isinstance(payload, dict):
-                    self.documents = payload.get("documents", [])
-                    for doc in self.documents:
-                        url = doc.get("metadata", {}).get("url")
-                        if url:
-                            self.scraped_pages.add(url)
-                else:
-                    self.documents = []
-            else:
-                self.data_path.parent.mkdir(parents=True, exist_ok=True)
-                self.documents = []
-                await self._save_store()
+            if isinstance(payload, list):
+                return payload
+            if isinstance(payload, dict):
+                return payload.get("documents", [])
         except Exception as exc:
-            logger.error("Error loading knowledge store: %s", exc)
-            self.documents = []
+            logger.error("Error loading knowledge store %s: %s", path, exc)
 
-    async def _save_store(self) -> None:
+        return []
+
+    async def _save_store_file(
+        self,
+        path: Path,
+        documents: list[dict[str, Any]],
+        *,
+        source: str,
+    ) -> None:
         payload = {
             "version": self.STORE_VERSION,
-            "website_url": self.website_url,
+            "source": source,
+            "website_url": self.website_url if source == "website" else None,
             "embedding_model": self.embedding_model,
             "built_at": datetime.now(timezone.utc).isoformat(),
-            "documents": self.documents,
+            "documents": documents,
         }
+        if source != "website":
+            payload.pop("website_url")
+
         try:
-            self.data_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.data_path, "w", encoding="utf-8") as handle:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
                 json.dump(payload, handle, indent=2)
         except Exception as exc:
-            logger.error("Error saving knowledge store: %s", exc)
+            logger.error("Error saving knowledge store %s: %s", path, exc)
 
-    async def add_document(
-        self,
-        text: str,
-        metadata: dict[str, Any] | None = None,
-        *,
-        auto_save: bool = True,
-    ) -> None:
-        doc = {
-            "text": text,
-            "metadata": metadata or {},
+    def _restore_scraped_pages(self) -> None:
+        self.scraped_pages = {
+            doc.get("metadata", {}).get("url")
+            for doc in self.website_documents
+            if doc.get("metadata", {}).get("url")
         }
-        self.documents.append(doc)
-        if auto_save:
-            await self._save_store()
 
     async def ingest_pdfs(self) -> None:
         pdf_folder = self.config.pdf_folder
@@ -141,7 +190,7 @@ class KnowledgeStore:
 
             chunks = self._split_text(text, max_length=self.config.chunk_size)
             for index, chunk in enumerate(chunks):
-                self.documents.append(
+                self.pdf_documents.append(
                     {
                         "text": chunk,
                         "metadata": {
@@ -253,28 +302,26 @@ class KnowledgeStore:
                 logger.warning("Cannot scrape website according to robots.txt")
                 return []
 
-            await self.scrape_website(max_pages=min(self.config.max_pages, 10))
-            await self._compute_embeddings()
-            await self._save_store()
+            await self._rebuild_website(max_pages=min(self.config.max_pages, 10))
             return await self.search(query, top_k)
         except Exception as exc:
             logger.error("Error searching website: %s", exc)
             return []
 
-    async def _compute_embeddings(self) -> None:
+    async def _compute_embeddings(self, documents: list[dict[str, Any]]) -> None:
         if not self.embeddings.enabled:
             logger.warning(
                 "Embeddings were not generated because OPENAI_API_KEY is missing"
             )
             return
 
-        texts = [doc["text"] for doc in self.documents]
+        texts = [doc["text"] for doc in documents]
         batch_size = 64
         for start in range(0, len(texts), batch_size):
             batch = texts[start : start + batch_size]
             vectors = await self.embeddings.embed_texts(batch)
             for offset, vector in enumerate(vectors):
-                self.documents[start + offset]["embedding"] = vector
+                documents[start + offset]["embedding"] = vector
 
     async def _can_scrape_website(self) -> bool:
         try:
@@ -301,7 +348,7 @@ class KnowledgeStore:
                 try:
                     page_html, page_text = await self._scrape_page(current_url)
                     if page_text:
-                        await self._add_web_content(current_url, page_text)
+                        self._add_web_content(current_url, page_text)
                         self.scraped_pages.add(current_url)
                         scraped_count += 1
 
@@ -367,13 +414,13 @@ class KnowledgeStore:
 
         return list(set(urls))
 
-    async def _add_web_content(self, url: str, content: str) -> None:
+    def _add_web_content(self, url: str, content: str) -> None:
         if not content or len(content.strip()) < 100:
             return
 
         chunks = self._split_text(content, max_length=self.config.chunk_size)
         for index, chunk in enumerate(chunks):
-            self.documents.append(
+            self.website_documents.append(
                 {
                     "text": chunk,
                     "metadata": {

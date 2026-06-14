@@ -48,7 +48,10 @@ class Assistant(Agent):
 
         self._initializing = True
         try:
-            logger.info("Loading knowledge store...")
+            logger.info(
+                "Loading knowledge store for client %s...",
+                self.config.client_id,
+            )
             self.vector_store = KnowledgeStore(self.config)
             await asyncio.wait_for(self.vector_store.initialize(), timeout=60)
             logger.info("Knowledge store loaded successfully.")
@@ -164,7 +167,7 @@ class Assistant(Agent):
 
         try:
             logger.info("Refreshing knowledge base...")
-            await self.vector_store.rebuild(max_pages=max_pages, force_refresh=True)
+            await self.vector_store.rebuild(max_pages=max_pages)
             return (
                 f"The knowledge base for {self.config.website_name} has been "
                 "refreshed from the website and PDF documents."
@@ -181,6 +184,7 @@ def prewarm(proc: JobProcess):
 async def entrypoint(ctx: JobContext):
     ctx.log_context_fields = {
         "room": ctx.room.name,
+        "client": AGENT_CONFIG.client_id,
     }
 
     session = AgentSession(
@@ -223,7 +227,7 @@ if __name__ == "__main__":
         WorkerOptions(
             entrypoint_fnc=entrypoint,
             prewarm_fnc=prewarm,
-            agent_name="telephone-agent",
+            agent_name=AGENT_CONFIG.agent_name,
             initialize_process_timeout=120.0,
         )
     )

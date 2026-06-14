@@ -1,0 +1,77 @@
+name: Deploy Agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      client:
+        description: Client to deploy
+        required: true
+        default: client-1
+        type: choice
+        options:
+          - client-1
+          - client-2
+          - all
+
+jobs:
+  resolve-clients:
+    runs-on: ubuntu-latest
+    outputs:
+      clients: ${{ steps.set-clients.outputs.clients }}
+    steps:
+      - id: set-clients
+        run: |
+          if [ "${{ github.event.inputs.client }}" = "all" ]; then
+            echo 'clients=["client-1","client-2"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'clients=["${{ github.event.inputs.client }}"]' >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: resolve-clients
+    strategy:
+      fail-fast: false
+      matrix:
+        client: ${{ fromJSON(needs.resolve-clients.outputs.clients) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: UV_GIT_LFS=1 uv sync --dev
+
+      - name: Validate client knowledge stores
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CLIENT_ID: ${{ matrix.client }}
+        run: uv run python scripts/knowledge.py validate --client "${{ matrix.client }}"
+
+      - name: Download agent models
+        run: uv run python src/agent.py download-files
+
+      - name: Install LiveKit CLI
+        run: curl -sSL https://get.livekit.io | bash
+
+      - name: Deploy to LiveKit Cloud
+        env:
+          LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}
+          LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
+          LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
+          CLIENT_ID: ${{ matrix.client }}
+          AGENT_CONFIG_PATH: config/clients/${{ matrix.client }}/agent.properties
+        run: |
+          lk cloud auth \
+            --url "$LIVEKIT_URL" \
+            --api-key "$LIVEKIT_API_KEY" \
+            --api-secret "$LIVEKIT_API_SECRET"
+          lk agent deploy
