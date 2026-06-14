@@ -11,7 +11,6 @@ Environment variables are loaded from .env.local automatically.
 import argparse
 import asyncio
 import os
-import sys
 
 from dotenv import load_dotenv
 from livekit import api
@@ -44,7 +43,9 @@ async def place_outbound_call(
     api_key = os.environ["LIVEKIT_API_KEY"]
     api_secret = os.environ["LIVEKIT_API_SECRET"]
 
-    async with api.LiveKitAPI(url=livekit_url, api_key=api_key, api_secret=api_secret) as lk_api:
+    async with api.LiveKitAPI(
+        url=livekit_url, api_key=api_key, api_secret=api_secret
+    ) as lk_api:
         resolved_trunk_id = trunk_id or await get_outbound_trunk_id(lk_api)
 
         print(f"Placing outbound call via trunk: {resolved_trunk_id}")
@@ -85,7 +86,9 @@ async def place_outbound_call(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Place an outbound SIP call via LiveKit")
+    parser = argparse.ArgumentParser(
+        description="Place an outbound SIP call via LiveKit"
+    )
     parser.add_argument("call_to", help="Phone number to call, e.g. +919868402577")
     parser.add_argument(
         "--room",

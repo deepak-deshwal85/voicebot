@@ -65,7 +65,7 @@ tasks:
       - "uv run scripts/outbound_call.py {{.PHONE}}"
 
   refresh-knowledge:
-    desc: "On-demand website knowledge refresh"
+    desc: "Rebuild knowledge base from website and PDF documents"
     vars:
       MAX_PAGES: '{{default "100" .MAX_PAGES}}'
     cmds:

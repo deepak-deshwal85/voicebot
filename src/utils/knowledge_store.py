@@ -1,372 +1,388 @@
-﻿import asyncio
+﻿from __future__ import annotations
+
+import asyncio
 import json
 import logging
-import os
-from collections import deque
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urljoin, urlparse
-from xml.etree import ElementTree
+from urllib.parse import urljoin, urlparse
+from urllib.robotparser import RobotFileParser
 
 import requests
 from bs4 import BeautifulSoup
+from pypdf import PdfReader
+
+from utils.config import AgentConfig, load_agent_config
+from utils.embeddings import EmbeddingService, cosine_similarity
 
 logger = logging.getLogger(__name__)
 
 
 class KnowledgeStore:
-    """Single-source knowledge module: crawl website, persist chunks, and query fast."""
+    STORE_VERSION = 2
 
-    def __init__(self, data_path: str = "data/knowledge_base.json"):
-        self.data_path = Path(data_path)
-        self.website_url = os.getenv(
-            "KNOWLEDGE_WEBSITE_URL", "https://www.fidelityinternational.com/"
-        )
+    def __init__(self, config: AgentConfig | None = None) -> None:
+        self.config = config or load_agent_config()
+        self.data_path = self.config.knowledge_data_path
+        self.website_url = self.config.website_url
         self.documents: list[dict[str, Any]] = []
         self.scraped_pages: set[str] = set()
+        self.embedding_model = self.config.embedding_model
+        self.embeddings = EmbeddingService(model=self.embedding_model)
 
-        self.priority_keywords = [
-            "products",
-            "fund",
-            "investment",
-            "retirement",
-            "pension",
-            "service",
-            "support",
-            "help",
-            "contact",
-            "fees",
-            "pricing",
-            "faq",
-            "insight",
-            "market",
-        ]
-        self.deny_keywords = [
-            "/login",
-            "/sign-in",
-            "/register",
-            "/account",
-            "/auth",
-            "/cookie",
-            "/privacy",
-            "/terms",
-            "/legal",
-            "facebook.com",
-            "linkedin.com",
-            "instagram.com",
-            "youtube.com",
-            "twitter.com",
-            "mailto:",
-            "tel:",
-        ]
-
-    async def initialize(
-        self,
-        preload_website: bool = False,
-        max_pages: int = 50,
-        force_refresh: bool = False,
-    ) -> None:
+    async def initialize(self) -> None:
+        """Load the pre-built knowledge base. No scraping at runtime."""
+        logger.info("Initializing knowledge store from %s", self.data_path)
         await self._load_or_create_store()
+        logger.info(
+            "Knowledge store initialized with %s documents", len(self.documents)
+        )
 
-        if preload_website and (force_refresh or not self.documents):
-            if force_refresh:
-                self.documents = []
-                self.scraped_pages.clear()
-            await self.scrape_website(max_pages=max_pages)
+    async def rebuild(
+        self,
+        max_pages: int | None = None,
+        force_refresh: bool = True,
+        include_website: bool = True,
+        include_pdfs: bool = True,
+    ) -> None:
+        """Build the knowledge base from website content and PDF documents."""
+        page_limit = max_pages or self.config.max_pages
+
+        if force_refresh:
+            self.documents = []
+            self.scraped_pages = set()
+
+        if include_pdfs:
+            await self.ingest_pdfs()
+
+        if include_website:
+            await self.scrape_website(max_pages=page_limit)
+
+        await self._compute_embeddings()
+        await self._save_store()
+        logger.info(
+            "Knowledge base rebuilt with %s documents from website and PDFs",
+            len(self.documents),
+        )
 
     async def _load_or_create_store(self) -> None:
         try:
             if self.data_path.exists():
-                with open(self.data_path, encoding="utf-8") as f:
-                    self.documents = json.load(f)
-                return
+                with open(self.data_path, encoding="utf-8") as handle:
+                    payload = json.load(handle)
 
-            self.data_path.parent.mkdir(parents=True, exist_ok=True)
-            self.documents = []
-            await self._save_store()
-        except Exception as e:
-            logger.error(f"Error loading store: {e}")
+                if isinstance(payload, list):
+                    self.documents = payload
+                elif isinstance(payload, dict):
+                    self.documents = payload.get("documents", [])
+                    for doc in self.documents:
+                        url = doc.get("metadata", {}).get("url")
+                        if url:
+                            self.scraped_pages.add(url)
+                else:
+                    self.documents = []
+            else:
+                self.data_path.parent.mkdir(parents=True, exist_ok=True)
+                self.documents = []
+                await self._save_store()
+        except Exception as exc:
+            logger.error("Error loading knowledge store: %s", exc)
             self.documents = []
 
     async def _save_store(self) -> None:
+        payload = {
+            "version": self.STORE_VERSION,
+            "website_url": self.website_url,
+            "embedding_model": self.embedding_model,
+            "built_at": datetime.now(timezone.utc).isoformat(),
+            "documents": self.documents,
+        }
         try:
-            with open(self.data_path, "w", encoding="utf-8") as f:
-                json.dump(self.documents, f, indent=2)
-        except Exception as e:
-            logger.error(f"Error saving store: {e}")
+            self.data_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.data_path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2)
+        except Exception as exc:
+            logger.error("Error saving knowledge store: %s", exc)
 
-    async def add_document(self, text: str, metadata: dict[str, Any] | None = None) -> None:
-        self.documents.append({"text": text, "metadata": metadata or {}})
-        await self._save_store()
+    async def add_document(
+        self,
+        text: str,
+        metadata: dict[str, Any] | None = None,
+        *,
+        auto_save: bool = True,
+    ) -> None:
+        doc = {
+            "text": text,
+            "metadata": metadata or {},
+        }
+        self.documents.append(doc)
+        if auto_save:
+            await self._save_store()
+
+    async def ingest_pdfs(self) -> None:
+        pdf_folder = self.config.pdf_folder
+        if not pdf_folder.exists():
+            logger.warning("PDF folder does not exist: %s", pdf_folder)
+            return
+
+        pdf_files = sorted(pdf_folder.glob("*.pdf"))
+        if not pdf_files:
+            logger.info("No PDF files found in %s", pdf_folder)
+            return
+
+        logger.info("Ingesting %s PDF file(s) from %s", len(pdf_files), pdf_folder)
+        for pdf_path in pdf_files:
+            text = await self._extract_pdf_text(pdf_path)
+            if not text.strip():
+                logger.warning("No text extracted from %s", pdf_path.name)
+                continue
+
+            chunks = self._split_text(text, max_length=self.config.chunk_size)
+            for index, chunk in enumerate(chunks):
+                self.documents.append(
+                    {
+                        "text": chunk,
+                        "metadata": {
+                            "type": "pdf_content",
+                            "source": "pdf",
+                            "filename": pdf_path.name,
+                            "path": str(pdf_path),
+                            "chunk": index,
+                        },
+                    }
+                )
+            logger.info("Added %s chunk(s) from %s", len(chunks), pdf_path.name)
+
+    async def _extract_pdf_text(self, pdf_path: Path) -> str:
+        def read_pdf() -> str:
+            reader = PdfReader(str(pdf_path))
+            pages = []
+            for page in reader.pages:
+                page_text = page.extract_text() or ""
+                if page_text.strip():
+                    pages.append(page_text)
+            return "\n".join(pages)
+
+        try:
+            return await asyncio.get_event_loop().run_in_executor(None, read_pdf)
+        except Exception as exc:
+            logger.error("Error reading PDF %s: %s", pdf_path, exc)
+            return ""
 
     async def search(self, query: str, top_k: int = 3) -> list[dict[str, Any]]:
         if not self.documents:
+            logger.warning("Knowledge base is empty")
             return []
 
-        query_words = set(query.lower().split())
-        # Prefix matching for longer words (handles STT truncations e.g. "juniorized" → "junior")
-        prefix_len = 6
-        query_prefixes = {w[:prefix_len] for w in query_words if len(w) > prefix_len}
-        # Short words (≤5 chars) get edit-distance-1 fuzzy matching (handles "ifa" → "isa")
-        short_query_words = {w for w in query_words if len(w) <= 5}
+        if self._has_embeddings():
+            results = await self._search_embeddings(query, top_k)
+            if results:
+                return results
+
+        return self._search_keywords(query, top_k)
+
+    async def search_with_fallback(
+        self, query: str, top_k: int = 3
+    ) -> list[dict[str, Any]]:
+        results = await self.search(query, top_k)
+        if results or not self.config.runtime_scraping_enabled:
+            return results
+
+        logger.info(
+            "No indexed content found for '%s'; runtime scraping is enabled",
+            query,
+        )
+        return await self.search_website(query, top_k)
+
+    def _has_embeddings(self) -> bool:
+        return any(doc.get("embedding") for doc in self.documents)
+
+    async def _search_embeddings(self, query: str, top_k: int) -> list[dict[str, Any]]:
+        query_embedding = await self.embeddings.embed_query(query)
+        if not query_embedding:
+            return []
 
         scored_docs: list[tuple[float, dict[str, Any]]] = []
+        for doc in self.documents:
+            embedding = doc.get("embedding")
+            if not embedding:
+                continue
+            score = cosine_similarity(query_embedding, embedding)
+            scored_docs.append(
+                (
+                    score,
+                    {
+                        "text": doc["text"],
+                        "type": doc.get("metadata", {}).get("type", ""),
+                        "source": doc.get("metadata", {}).get("source", ""),
+                        "score": score,
+                    },
+                )
+            )
+
+        scored_docs.sort(key=lambda item: item[0], reverse=True)
+        return [doc for _, doc in scored_docs[:top_k] if doc.get("score", 0) > 0.2]
+
+    def _search_keywords(self, query: str, top_k: int) -> list[dict[str, Any]]:
+        query_words = set(query.lower().split())
+        scored_docs: list[tuple[int, dict[str, Any]]] = []
 
         for doc in self.documents:
             doc_words = set(doc["text"].lower().split())
-            # Exact keyword overlap (full weight)
-            exact = query_words & doc_words
-            score = float(len(exact))
-
-            # Prefix overlap for unmatched longer words (half weight)
-            if query_prefixes:
-                unmatched_prefixes = {
-                    w[:prefix_len] for w in query_words - exact if len(w) > prefix_len
-                }
-                for dw in doc_words:
-                    if dw[:prefix_len] in unmatched_prefixes:
-                        score += 0.5
-
-            # Edit-distance-1 fuzzy match for short unmatched words (half weight)
-            unmatched_short = short_query_words - exact
-            if unmatched_short:
-                for dw in doc_words:
-                    for qw in unmatched_short:
-                        if KnowledgeStore._edit_distance_1(qw, dw):
-                            score += 0.5
-                            break
-
+            score = len(query_words.intersection(doc_words))
             if score > 0:
                 scored_docs.append(
                     (
                         score,
                         {
                             "text": doc["text"],
-                            "type": doc["metadata"].get("type", ""),
-                            "url": doc["metadata"].get("url", ""),
+                            "type": doc.get("metadata", {}).get("type", ""),
+                            "source": doc.get("metadata", {}).get("source", ""),
                         },
                     )
                 )
 
-        scored_docs.sort(key=lambda x: x[0], reverse=True)
+        scored_docs.sort(key=lambda item: item[0], reverse=True)
         return [doc for _, doc in scored_docs[:top_k]]
 
-    @staticmethod
-    def _edit_distance_1(a: str, b: str) -> bool:
-        """Return True if strings a and b differ by at most 1 edit (substitute/insert/delete)."""
-        if a == b:
-            return False  # identical → already handled by exact match
-        la, lb = len(a), len(b)
-        if abs(la - lb) > 1:
-            return False
-        if la == lb:
-            return sum(c1 != c2 for c1, c2 in zip(a, b)) == 1
-        # One insertion/deletion
-        short, long_ = (a, b) if la < lb else (b, a)
-        i = j = diffs = 0
-        while i < len(short) and j < len(long_):
-            if short[i] != long_[j]:
-                diffs += 1
-                j += 1
-                if diffs > 1:
-                    return False
-            else:
-                i += 1
-                j += 1
-        return True
+    async def search_website(self, query: str, top_k: int = 3) -> list[dict[str, Any]]:
+        try:
+            if not await self._can_scrape_website():
+                logger.warning("Cannot scrape website according to robots.txt")
+                return []
+
+            await self.scrape_website(max_pages=min(self.config.max_pages, 10))
+            await self._compute_embeddings()
+            await self._save_store()
+            return await self.search(query, top_k)
+        except Exception as exc:
+            logger.error("Error searching website: %s", exc)
+            return []
+
+    async def _compute_embeddings(self) -> None:
+        if not self.embeddings.enabled:
+            logger.warning(
+                "Embeddings were not generated because OPENAI_API_KEY is missing"
+            )
+            return
+
+        texts = [doc["text"] for doc in self.documents]
+        batch_size = 64
+        for start in range(0, len(texts), batch_size):
+            batch = texts[start : start + batch_size]
+            vectors = await self.embeddings.embed_texts(batch)
+            for offset, vector in enumerate(vectors):
+                self.documents[start + offset]["embedding"] = vector
+
+    async def _can_scrape_website(self) -> bool:
+        try:
+            robots_url = urljoin(self.website_url, "/robots.txt")
+            robot_parser = RobotFileParser()
+            robot_parser.set_url(robots_url)
+            await asyncio.get_event_loop().run_in_executor(None, robot_parser.read)
+            return robot_parser.can_fetch("*", self.website_url)
+        except Exception as exc:
+            logger.warning("Could not check robots.txt: %s", exc)
+            return True
 
     async def scrape_website(self, max_pages: int = 10) -> None:
         try:
-            seed_urls = await self._build_seed_urls(max_pages=max_pages)
-            urls_to_scrape = deque(seed_urls)
-            queued_urls = set(seed_urls)
+            logger.info("Starting website scraping of %s", self.website_url)
+            urls_to_scrape = [self.website_url]
             scraped_count = 0
 
             while urls_to_scrape and scraped_count < max_pages:
-                current_url = urls_to_scrape.popleft()
+                current_url = urls_to_scrape.pop(0)
                 if current_url in self.scraped_pages:
                     continue
 
-                page_data = await self._scrape_page(current_url)
-                if not page_data["text"]:
-                    continue
+                try:
+                    page_html, page_text = await self._scrape_page(current_url)
+                    if page_text:
+                        await self._add_web_content(current_url, page_text)
+                        self.scraped_pages.add(current_url)
+                        scraped_count += 1
 
-                await self._add_web_content(current_url, page_data["text"])
-                self.scraped_pages.add(current_url)
-                scraped_count += 1
+                        for url in self._extract_urls(page_html, current_url):
+                            if (
+                                url not in self.scraped_pages
+                                and len(urls_to_scrape) < max_pages * 2
+                            ):
+                                urls_to_scrape.append(url)
+                except Exception as exc:
+                    logger.error("Error scraping %s: %s", current_url, exc)
 
-                new_urls = sorted(
-                    page_data["links"],
-                    key=lambda u: self._url_priority_score(u),
-                    reverse=True,
-                )
-                for url in new_urls:
-                    if (
-                        url not in self.scraped_pages
-                        and url not in queued_urls
-                        and self._should_include_url(url)
-                    ):
-                        urls_to_scrape.append(url)
-                        queued_urls.add(url)
+            logger.info("Scraped %s page(s) from website", scraped_count)
+        except Exception as exc:
+            logger.error("Error during website scraping: %s", exc)
 
-            await self._save_store()
-        except Exception as e:
-            logger.error(f"Error during website scraping: {e}")
-
-    async def _scrape_page(self, url: str) -> dict[str, Any]:
+    async def _scrape_page(self, url: str) -> tuple[str, str]:
         try:
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/91.0.4472.124 Safari/537.36"
+                )
             }
             response = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: requests.get(url, headers=headers, timeout=10)
+                None,
+                lambda: requests.get(url, headers=headers, timeout=10),
             )
+
             if response.status_code != 200:
-                return {"text": "", "links": []}
+                logger.warning(
+                    "Failed to scrape %s: HTTP %s", url, response.status_code
+                )
+                return "", ""
 
             soup = BeautifulSoup(response.content, "lxml")
-            links: list[str] = []
-            for link in soup.find_all("a", href=True):
-                absolute_url = self._normalize_url(urljoin(url, link["href"]))
-                if self._should_include_url(absolute_url):
-                    links.append(absolute_url)
+            page_html = response.text
 
-            for script in soup(["script", "style"]):
-                script.decompose()
+            for element in soup(["script", "style"]):
+                element.decompose()
 
             text = soup.get_text(separator=" ", strip=True)
-            text = " ".join(text.split())
-            return {"text": text, "links": list(set(links))}
-        except Exception as e:
-            logger.error(f"Error scraping page {url}: {e}")
-            return {"text": "", "links": []}
+            text = re.sub(r"\s+", " ", text).strip()
+            return page_html, text
+        except Exception as exc:
+            logger.error("Error scraping page %s: %s", url, exc)
+            return "", ""
 
-    async def _build_seed_urls(self, max_pages: int) -> list[str]:
-        seeds: list[str] = [self._normalize_url(self.website_url)]
-
-        sitemap_urls = await self._fetch_sitemap_urls(limit=max_pages * 3)
-        if sitemap_urls:
-            seeds.extend(
-                sorted(
-                    sitemap_urls,
-                    key=lambda u: self._url_priority_score(u),
-                    reverse=True,
-                )
-            )
-
-        section_paths = [
-            "products",
-            "funds",
-            "investments",
-            "retirement",
-            "pensions",
-            "help",
-            "support",
-            "contact",
-            "insights",
-            "markets",
-            "pricing",
-            "fees",
-            "faqs",
-        ]
-        seeds.extend(urljoin(self.website_url, path) for path in section_paths)
-
-        unique: list[str] = []
-        seen = set()
-        for url in seeds:
-            normalized = self._normalize_url(url)
-            if normalized and normalized not in seen and self._should_include_url(normalized):
-                seen.add(normalized)
-                unique.append(normalized)
-
-        return unique[: max(max_pages * 2, 20)]
-
-    async def _fetch_sitemap_urls(self, limit: int = 200) -> list[str]:
-        candidates = [
-            urljoin(self.website_url, "sitemap.xml"),
-            urljoin(self.website_url, "sitemap_index.xml"),
-        ]
-
+    def _extract_urls(self, html: str, base_url: str) -> list[str]:
         urls: list[str] = []
-        for sitemap_url in candidates:
-            try:
-                response = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda sitemap_url=sitemap_url: requests.get(sitemap_url, timeout=10),
-                )
-                if response.status_code != 200:
-                    continue
+        if not html:
+            return urls
 
-                root = ElementTree.fromstring(response.content)
-                ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
-                loc_nodes = root.findall(".//sm:url/sm:loc", ns) or root.findall(".//url/loc")
+        try:
+            soup = BeautifulSoup(html, "lxml")
+            for link in soup.find_all("a", href=True):
+                absolute_url = urljoin(base_url, link["href"])
+                if urlparse(absolute_url).netloc == urlparse(self.website_url).netloc:
+                    urls.append(absolute_url)
+        except Exception as exc:
+            logger.error("Error extracting URLs: %s", exc)
 
-                for node in loc_nodes:
-                    if not node.text:
-                        continue
-                    normalized = self._normalize_url(node.text.strip())
-                    if normalized and self._should_include_url(normalized):
-                        urls.append(normalized)
-                        if len(urls) >= limit:
-                            return urls
-            except Exception:
-                continue
-
-        return urls
-
-    def _normalize_url(self, url: str) -> str:
-        parsed = urlparse(url)
-        if parsed.scheme not in {"http", "https"}:
-            return ""
-
-        path = parsed.path.rstrip("/")
-        normalized = f"{parsed.scheme}://{parsed.netloc}{path}"
-
-        if parsed.query:
-            query = parse_qs(parsed.query, keep_blank_values=True)
-            keep = {k: query[k] for k in ("page", "p") if k in query}
-            if keep:
-                pairs = [f"{k}={v}" for k, values in keep.items() for v in values]
-                if pairs:
-                    normalized = f"{normalized}?{'&'.join(pairs)}"
-
-        return normalized
-
-    def _url_priority_score(self, url: str) -> int:
-        lower = url.lower()
-        score = sum(5 for keyword in self.priority_keywords if keyword in lower)
-        if lower.count("/") <= 4:
-            score += 2
-        if "?" not in lower:
-            score += 1
-        return score
-
-    def _should_include_url(self, url: str) -> bool:
-        if not url:
-            return False
-
-        parsed = urlparse(url)
-        base = urlparse(self.website_url)
-        if parsed.netloc != base.netloc:
-            return False
-
-        lower = url.lower()
-        return all(denied not in lower for denied in self.deny_keywords)
+        return list(set(urls))
 
     async def _add_web_content(self, url: str, content: str) -> None:
         if not content or len(content.strip()) < 100:
             return
 
-        chunks = self._split_text(content, max_length=1000)
-        for i, chunk in enumerate(chunks):
-            await self.add_document(
-                text=chunk,
-                metadata={
-                    "type": "website_content",
-                    "source": "website",
-                    "url": url,
-                    "chunk": i,
-                },
+        chunks = self._split_text(content, max_length=self.config.chunk_size)
+        for index, chunk in enumerate(chunks):
+            self.documents.append(
+                {
+                    "text": chunk,
+                    "metadata": {
+                        "type": "website_content",
+                        "source": "website",
+                        "url": url,
+                        "chunk": index,
+                    },
+                }
             )
 
     def _split_text(self, text: str, max_length: int = 1000) -> list[str]:
@@ -375,7 +391,8 @@ class KnowledgeStore:
         current_chunk: list[str] = []
 
         for word in words:
-            if len(" ".join([*current_chunk, word])) <= max_length:
+            candidate = " ".join([*current_chunk, word])
+            if len(candidate) <= max_length:
                 current_chunk.append(word)
             else:
                 if current_chunk:
