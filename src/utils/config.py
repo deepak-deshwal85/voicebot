@@ -98,7 +98,7 @@ class WorkerSettings:
 
 def load_worker_settings() -> WorkerSettings:
     return WorkerSettings(
-        agent_name=os.getenv("AGENT_NAME", "voice-agent"),
+        agent_name=os.getenv("AGENT_NAME", "telephone-agent"),
         default_client_id=os.getenv("DEFAULT_CLIENT_ID", DEFAULT_CLIENT_ID),
     )
 

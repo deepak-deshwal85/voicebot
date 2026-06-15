@@ -63,14 +63,14 @@ Copy `.env.example` to `.env.local` and fill in the required values. At minimum 
 | `LIVEKIT_URL` | LiveKit Cloud WebSocket URL |
 | `LIVEKIT_API_KEY` | LiveKit API key |
 | `LIVEKIT_API_SECRET` | LiveKit API secret |
-| `AGENT_NAME` | Worker name registered with LiveKit (`voice-agent`) |
+| `AGENT_NAME` | Worker name registered with LiveKit (`telephone-agent`) |
 | `DEFAULT_CLIENT_ID` | Fallback tenant for console/dev when no SIP call |
 | `OPENAI_API_KEY` | Embeddings for knowledge base search (optional but recommended) |
 
 Example `.env.local`:
 
 ```env
-AGENT_NAME=voice-agent
+AGENT_NAME=telephone-agent
 DEFAULT_CLIENT_ID=client-1
 LIVEKIT_URL=wss://your-project.livekit.cloud
 LIVEKIT_API_KEY=...
@@ -96,7 +96,7 @@ Then add `AGENT_NAME`, `DEFAULT_CLIENT_ID`, and `OPENAI_API_KEY` to `.env.local`
 
 ## Multi-tenant architecture
 
-A **single agent worker** (`AGENT_NAME=voice-agent`) runs on your infrastructure and connects to **LiveKit Cloud**. Each tenant (client) has its own config and knowledge base; the worker picks the tenant at runtime from the SIP trunk phone number:
+A **single agent worker** (`AGENT_NAME=telephone-agent`) runs on your infrastructure and connects to **LiveKit Cloud**. Each tenant (client) has its own config and knowledge base; the worker picks the tenant at runtime from the SIP trunk phone number:
 
 ```text
 participant.attributes.get("sip.trunkPhoneNumber")  →  client config  →  knowledge store
@@ -180,7 +180,7 @@ In production, use the `start` command:
 uv run python src/agent.py start
 ```
 
-The worker registers as `AGENT_NAME` (default `voice-agent`). Tenant config is chosen per session from the SIP trunk phone number.
+The worker registers as `AGENT_NAME` (default `telephone-agent`). Tenant config is chosen per session from the SIP trunk phone number.
 
 ### Docker (single multi-tenant image)
 
@@ -259,7 +259,7 @@ Refreshed JSON files are uploaded as workflow artifacts.
 The deploy workflow runs `lk agent deploy` with:
 
 - `OPENAI_API_KEY`
-- `AGENT_NAME=voice-agent`
+- `AGENT_NAME=telephone-agent`
 - `DEFAULT_CLIENT_ID=client-1`
 - `EMBEDDING_MODEL`
 

@@ -1,6 +1,6 @@
 # Vobiz Telephony Integration (SIP -> LiveKit Cloud -> Multi-Tenant Worker)
 
-Telephony routes through **LiveKit Cloud SIP**. A single **agent worker** on your infrastructure registers as `voice-agent` and resolves the tenant from the SIP participant attribute `sip.trunkPhoneNumber`.
+Telephony routes through **LiveKit Cloud SIP**. A single **agent worker** on your infrastructure registers as `telephone-agent` and resolves the tenant from the SIP participant attribute `sip.trunkPhoneNumber`.
 
 See [multi-tenant-telephony.md](multi-tenant-telephony.md) for architecture, local testing, and Oracle Cloud deployment.
 
@@ -17,7 +17,7 @@ LIVEKIT_URL=wss://<your-livekit-project>.livekit.cloud
 LIVEKIT_API_KEY=<your_api_key>
 LIVEKIT_API_SECRET=<your_api_secret>
 
-AGENT_NAME=voice-agent
+AGENT_NAME=telephone-agent
 DEFAULT_CLIENT_ID=client-1
 OPENAI_API_KEY=...
 ```
@@ -41,13 +41,13 @@ Or use `lk sip inbound create` / the LiveKit dashboard manually.
 
 ## 3. Create a dispatch rule to the multi-tenant worker
 
-Dispatch rule must target `voice-agent` (same as `AGENT_NAME`):
+Dispatch rule must target `telephone-agent` (same as `AGENT_NAME`):
 
 ```bash
 lk sip dispatch --help
 ```
 
-The setup script creates a rule with `"agents": ["voice-agent"]`.
+The setup script creates a rule with `"agents": ["telephone-agent"]`.
 
 ## 4. Run the worker
 
@@ -81,6 +81,6 @@ TENANT_PHONE_OVERRIDE=+911171366880 uv run python src/agent.py dev
 
 ## Troubleshooting
 
-- **Call reaches LiveKit but no agent**: dispatch rule must list `voice-agent`; worker must be running
+- **Call reaches LiveKit but no agent**: dispatch rule must list `telephone-agent`; worker must be running
 - **Wrong tenant**: verify `telephony.phone_number` matches LiveKit trunk DID
 - **Unknown phone error**: add mapping in client config for that DID

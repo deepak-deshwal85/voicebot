@@ -5,7 +5,7 @@ One **agent worker** runs on your infrastructure and connects to **LiveKit Cloud
 ## Architecture
 
 ```text
-Caller -> Vobiz/PSTN -> LiveKit Cloud SIP -> dispatch rule -> voice-agent worker (your infra)
+Caller -> Vobiz/PSTN -> LiveKit Cloud SIP -> dispatch rule -> telephone-agent worker (your infra)
                                                                     |
                                                     sip.trunkPhoneNumber
                                                                     |
@@ -15,7 +15,7 @@ Caller -> Vobiz/PSTN -> LiveKit Cloud SIP -> dispatch rule -> voice-agent worker
 | Component | Location | Role |
 |-----------|----------|------|
 | LiveKit server | LiveKit Cloud | Rooms, SIP trunks, dispatch rules |
-| Agent worker | Your infra (Oracle Cloud, Docker, VM) | Single `voice-agent` process |
+| Agent worker | Your infra (Oracle Cloud, Docker, VM) | Single `telephone-agent` process |
 | Client config | Repo `config/clients/` | Prompts, KB paths, `telephony.phone_number` |
 | Knowledge base | Repo `data/clients/` | Per-tenant embeddings JSON |
 
@@ -40,7 +40,7 @@ LIVEKIT_API_KEY=...
 LIVEKIT_API_SECRET=...
 OPENAI_API_KEY=...
 
-AGENT_NAME=voice-agent
+AGENT_NAME=telephone-agent
 DEFAULT_CLIENT_ID=client-1
 ```
 
@@ -58,7 +58,7 @@ Repeat for `client-2` with a different `telephony.phone_number`.
 ### LiveKit Cloud
 
 1. **Inbound SIP trunk** per DID (Telephony → SIP Trunks)
-2. **Dispatch rule** targeting `voice-agent` (must match `AGENT_NAME`)
+2. **Dispatch rule** targeting `telephone-agent` (must match `AGENT_NAME`)
 3. Phone number on each trunk must match `telephony.phone_number` in the matching client config
 
 Use `bash scripts/setup-sip.sh` to create **inbound trunks for all tenants** and one dispatch rule:
@@ -115,7 +115,7 @@ Terminal 1 — start worker locally:
 uv run python src/agent.py dev
 ```
 
-Ensure LiveKit dispatch rule points to `voice-agent` and your local worker is registered (dev mode connects to the same LiveKit project).
+Ensure LiveKit dispatch rule points to `telephone-agent` and your local worker is registered (dev mode connects to the same LiveKit project).
 
 Call the Vobiz number configured for `client-1`. Check logs for:
 
@@ -147,12 +147,12 @@ docker build -t voicebot .
 ```bash
 docker run -d --name voicebot \
   --env-file .env.local \
-  -e AGENT_NAME=voice-agent \
+  -e AGENT_NAME=telephone-agent \
   -e DEFAULT_CLIENT_ID=client-1 \
   voicebot
 ```
 
-The container runs `uv run src/agent.py start`, registers as `voice-agent`, and waits for jobs from LiveKit Cloud.
+The container runs `uv run src/agent.py start`, registers as `telephone-agent`, and waits for jobs from LiveKit Cloud.
 
 Requirements on OCI:
 
@@ -163,14 +163,14 @@ Requirements on OCI:
 
 ### Register worker with LiveKit
 
-Your worker must connect to the **same** LiveKit project where SIP trunks and dispatch rules are configured. No separate "agent deploy" is required for self-hosted workers if you run the Docker container yourself — only ensure `AGENT_NAME=voice-agent` matches the dispatch rule.
+Your worker must connect to the **same** LiveKit project where SIP trunks and dispatch rules are configured. No separate "agent deploy" is required for self-hosted workers if you run the Docker container yourself — only ensure `AGENT_NAME=telephone-agent` matches the dispatch rule.
 
 Alternatively, use `lk agent deploy` from CI to LiveKit Cloud-hosted workers; for OCI self-host, run the container directly.
 
 ## Outbound calls
 
 ```bash
-uv run python scripts/outbound_call.py +919868402577 --agent voice-agent
+uv run python scripts/outbound_call.py +919868402577 --agent telephone-agent
 ```
 
 Pass `--room` with a unique name per call. Tenant for outbound is not inferred from trunk phone automatically today; use room metadata or extend dispatch if needed.
@@ -179,7 +179,7 @@ Pass `--room` with a unique name per call. Tenant for outbound is not inferred f
 
 | Symptom | Check |
 |---------|--------|
-| Call reaches LiveKit but no agent | Dispatch rule `agents` includes `voice-agent`; worker is running and connected |
+| Call reaches LiveKit but no agent | Dispatch rule `agents` includes `telephone-agent`; worker is running and connected |
 | Wrong tenant KB / prompts | `telephony.phone_number` matches LiveKit trunk DID; check logs for `trunk_phone` |
 | `No client configured for trunk phone` | Add or fix `telephony.phone_number` in client config |
 | Console/dev uses wrong client | Set `DEFAULT_CLIENT_ID` or `TENANT_PHONE_OVERRIDE` |

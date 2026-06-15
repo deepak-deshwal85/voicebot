@@ -315,7 +315,7 @@ def main() -> None:
     if not livekit_url:
         raise SystemExit("LIVEKIT_URL is not set in .env.local")
 
-    agent_name = os.getenv("AGENT_NAME", "voice-agent")
+    agent_name = os.getenv("AGENT_NAME", "telephone-agent")
     sip_domain = os.getenv("VOBIZ_SIP_DOMAIN", "")
     specs = load_tenant_trunk_specs()
 

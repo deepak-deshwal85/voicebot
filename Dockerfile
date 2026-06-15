@@ -48,7 +48,7 @@ RUN uv sync --locked
 # (Excludes files specified in .dockerignore)
 COPY . .
 
-ENV AGENT_NAME=voice-agent
+ENV AGENT_NAME=telephone-agent
 ENV DEFAULT_CLIENT_ID=client-1
 
 # Change ownership of all app files to the non-privileged user

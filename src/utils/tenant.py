@@ -12,11 +12,32 @@ from utils.config import DEFAULT_CLIENT_ID, list_client_ids, load_agent_config
 logger = logging.getLogger("tenant")
 
 SIP_TRUNK_PHONE_ATTR = "sip.trunkPhoneNumber"
+TELEPHONY_ROOM_PREFIXES = ("call-", "outbound-")
 
 
-def normalize_phone_digits(phone: str) -> str:
+def coerce_phone_value(value: object) -> str | None:
+    """Normalize SIP trunk phone values from env vars or participant attributes."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    if isinstance(value, (int, float)):
+        return str(int(value))
+    text = str(value).strip()
+    return text or None
+
+
+def is_telephony_room(room_name: str) -> bool:
+    return room_name.startswith(TELEPHONY_ROOM_PREFIXES)
+
+
+def normalize_phone_digits(phone: str | object) -> str:
     """Return digits-only form used for tenant lookup."""
-    return re.sub(r"\D", "", phone.strip())
+    text = coerce_phone_value(phone)
+    if not text:
+        return ""
+    return re.sub(r"\D", "", text)
 
 
 def build_phone_to_client_index() -> dict[str, str]:
@@ -38,9 +59,10 @@ def build_phone_to_client_index() -> dict[str, str]:
     return index
 
 
-def resolve_client_id_for_phone(phone: str | None) -> str:
+def resolve_client_id_for_phone(phone: str | object | None) -> str:
     """Resolve tenant client id from a SIP trunk phone number."""
-    if not phone:
+    normalized_phone = coerce_phone_value(phone)
+    if not normalized_phone:
         default_client = os.getenv("DEFAULT_CLIENT_ID", DEFAULT_CLIENT_ID)
         logger.info(
             "No SIP trunk phone number; using default client %s",
@@ -48,7 +70,7 @@ def resolve_client_id_for_phone(phone: str | None) -> str:
         )
         return default_client
 
-    digits = normalize_phone_digits(phone)
+    digits = normalize_phone_digits(normalized_phone)
     if not digits:
         raise ValueError(f"Invalid phone number: {phone!r}")
 
@@ -60,16 +82,16 @@ def resolve_client_id_for_phone(phone: str | None) -> str:
             if load_agent_config(client_id=cid).telephony_phone_number
         )
         raise ValueError(
-            f"No client configured for trunk phone '{phone}'. "
+            f"No client configured for trunk phone '{normalized_phone}'. "
             f"Configured mappings: {configured or 'none'}"
         )
 
-    logger.info("Resolved trunk phone %s -> client %s", phone, client_id)
+    logger.info("Resolved trunk phone %s -> client %s", normalized_phone, client_id)
     return client_id
 
 
 def extract_sip_trunk_phone(participant: rtc.RemoteParticipant) -> str | None:
-    return participant.attributes.get(SIP_TRUNK_PHONE_ATTR)
+    return coerce_phone_value(participant.attributes.get(SIP_TRUNK_PHONE_ATTR))
 
 
 def find_sip_trunk_phone(room: rtc.Room) -> str | None:

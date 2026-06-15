@@ -25,6 +25,8 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from utils.config import AgentConfig, load_agent_config, load_worker_settings
 from utils.knowledge_store import KnowledgeStore
 from utils.tenant import (
+    coerce_phone_value,
+    is_telephony_room,
     resolve_client_id_for_phone,
     wait_for_sip_trunk_phone,
 )
@@ -191,9 +193,15 @@ async def resolve_session_config(ctx: JobContext) -> tuple[AgentConfig, str | No
     """Load tenant client config from SIP trunk phone number or local fallback."""
     await ctx.connect()
 
-    trunk_phone = os.getenv("TENANT_PHONE_OVERRIDE")
-    if not trunk_phone:
-        trunk_phone = await wait_for_sip_trunk_phone(ctx.room)
+    trunk_phone = coerce_phone_value(os.getenv("TENANT_PHONE_OVERRIDE"))
+    if not trunk_phone and is_telephony_room(ctx.room.name):
+        trunk_phone = coerce_phone_value(await wait_for_sip_trunk_phone(ctx.room))
+    elif not trunk_phone:
+        logger.info(
+            "Non-telephony room %s; using default client %s",
+            ctx.room.name,
+            WORKER_SETTINGS.default_client_id,
+        )
 
     try:
         client_id = resolve_client_id_for_phone(trunk_phone)

@@ -54,7 +54,7 @@ jobs:
 
       - name: Download agent models
         env:
-          AGENT_NAME: voice-agent
+          AGENT_NAME: telephone-agent
         run: uv run python src/agent.py download-files
 
       - name: Install LiveKit CLI
@@ -77,6 +77,6 @@ jobs:
 
           lk agent deploy \
             --secrets "OPENAI_API_KEY=${OPENAI_API_KEY}" \
-            --secrets "AGENT_NAME=voice-agent" \
+            --secrets "AGENT_NAME=telephone-agent" \
             --secrets "DEFAULT_CLIENT_ID=client-1" \
             --secrets "EMBEDDING_MODEL=text-embedding-3-small"
