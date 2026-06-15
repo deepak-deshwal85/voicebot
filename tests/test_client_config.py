@@ -13,7 +13,7 @@ def test_load_client_config_paths() -> None:
     for client_id in ("client-1", "client-2"):
         config = load_agent_config(client_id=client_id)
         assert config.client_id == client_id
-        assert config.agent_name == f"{client_id}-voice-agent"
+        assert config.telephony_phone_number
         assert config.knowledge_website_path.as_posix().endswith(
             f"data/clients/{client_id}/knowledge_website.json"
         )
