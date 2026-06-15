@@ -9,11 +9,13 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR / "src"))
 
 from agent import Assistant
+from utils.config import load_agent_config
 
 
 async def main() -> None:
     print("Testing agent initialization...")
-    agent = Assistant()
+    config = load_agent_config(client_id="client-1")
+    agent = Assistant(config=config)
 
     success = await agent._ensure_vector_store()
     if success and agent.vector_store:

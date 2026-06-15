@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 
 from dotenv import load_dotenv
 from livekit.agents import (
@@ -21,20 +22,25 @@ from livekit.agents import (
 from livekit.plugins import noise_cancellation, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
-from utils.config import load_agent_config
+from utils.config import AgentConfig, load_agent_config, load_worker_settings
 from utils.knowledge_store import KnowledgeStore
+from utils.tenant import (
+    resolve_client_id_for_phone,
+    wait_for_sip_trunk_phone,
+)
 
 logger = logging.getLogger("agent")
 
 load_dotenv(".env")
 load_dotenv(".env.local", override=True)
-AGENT_CONFIG = load_agent_config()
+
+WORKER_SETTINGS = load_worker_settings()
 
 
 class Assistant(Agent):
-    def __init__(self) -> None:
-        super().__init__(instructions=AGENT_CONFIG.instructions)
-        self.config = AGENT_CONFIG
+    def __init__(self, config: AgentConfig) -> None:
+        super().__init__(instructions=config.instructions)
+        self.config = config
         self.vector_store: KnowledgeStore | None = None
         self.is_first_interaction = True
         self._initializing = False
@@ -181,10 +187,45 @@ def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
 
 
+async def resolve_session_config(ctx: JobContext) -> tuple[AgentConfig, str | None]:
+    """Load tenant client config from SIP trunk phone number or local fallback."""
+    await ctx.connect()
+
+    trunk_phone = os.getenv("TENANT_PHONE_OVERRIDE")
+    if not trunk_phone:
+        trunk_phone = await wait_for_sip_trunk_phone(ctx.room)
+
+    try:
+        client_id = resolve_client_id_for_phone(trunk_phone)
+        config = load_agent_config(client_id=client_id)
+    except ValueError as exc:
+        if trunk_phone:
+            logger.error("Tenant resolution failed: %s", exc)
+            raise
+        logger.warning(
+            "No SIP trunk phone; falling back to default client %s",
+            WORKER_SETTINGS.default_client_id,
+        )
+        config = load_agent_config(client_id=WORKER_SETTINGS.default_client_id)
+
+    if trunk_phone:
+        logger.info(
+            "SIP session client=%s trunk_phone=%s room=%s",
+            config.client_id,
+            trunk_phone,
+            ctx.room.name,
+        )
+
+    return config, trunk_phone
+
+
 async def entrypoint(ctx: JobContext):
+    agent_config, trunk_phone = await resolve_session_config(ctx)
+
     ctx.log_context_fields = {
         "room": ctx.room.name,
-        "client": AGENT_CONFIG.client_id,
+        "client": agent_config.client_id,
+        "trunk_phone": trunk_phone or "none",
     }
 
     session = AgentSession(
@@ -212,14 +253,12 @@ async def entrypoint(ctx: JobContext):
     ctx.add_shutdown_callback(log_usage)
 
     await session.start(
-        agent=Assistant(),
+        agent=Assistant(config=agent_config),
         room=ctx.room,
         room_input_options=RoomInputOptions(
             noise_cancellation=noise_cancellation.BVC(),
         ),
     )
-
-    await ctx.connect()
 
 
 if __name__ == "__main__":
@@ -227,7 +266,7 @@ if __name__ == "__main__":
         WorkerOptions(
             entrypoint_fnc=entrypoint,
             prewarm_fnc=prewarm,
-            agent_name=AGENT_CONFIG.agent_name,
+            agent_name=WORKER_SETTINGS.agent_name,
             initialize_process_timeout=120.0,
         )
     )

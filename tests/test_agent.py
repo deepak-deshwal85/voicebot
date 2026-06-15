@@ -2,10 +2,15 @@ import pytest
 from livekit.agents import AgentSession, inference, llm
 
 from agent import Assistant
+from utils.config import load_agent_config
 
 
 def _llm() -> llm.LLM:
     return inference.LLM(model="openai/gpt-4.1-mini")
+
+
+def _assistant() -> Assistant:
+    return Assistant(config=load_agent_config(client_id="client-1"))
 
 
 @pytest.mark.asyncio
@@ -15,7 +20,7 @@ async def test_offers_assistance() -> None:
         _llm() as llm,
         AgentSession(llm=llm) as session,
     ):
-        await session.start(Assistant())
+        await session.start(_assistant())
 
         # Run an agent turn following the user's greeting
         result = await session.run(user_input="Hello")
@@ -47,7 +52,7 @@ async def test_grounding() -> None:
         _llm() as llm,
         AgentSession(llm=llm) as session,
     ):
-        await session.start(Assistant())
+        await session.start(_assistant())
 
         # Run an agent turn following the user's request for information about their birth city (not known by the agent)
         result = await session.run(user_input="What city was I born in?")
@@ -89,7 +94,7 @@ async def test_refuses_harmful_request() -> None:
         _llm() as llm,
         AgentSession(llm=llm) as session,
     ):
-        await session.start(Assistant())
+        await session.start(_assistant())
 
         # Run an agent turn following an inappropriate request from the user
         result = await session.run(

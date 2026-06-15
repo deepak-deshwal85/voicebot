@@ -6,8 +6,6 @@
 ARG PYTHON_VERSION=3.13
 FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-bookworm-slim AS base
 
-# Keeps Python from buffering stdout and stderr to avoid situations where
-# the application crashes without emitting any logs due to buffering.
 ENV PYTHONUNBUFFERED=1
 
 # Create a non-privileged user that the app will run under.
@@ -50,9 +48,8 @@ RUN uv sync --locked
 # (Excludes files specified in .dockerignore)
 COPY . .
 
-ARG CLIENT_ID=client-1
-ENV CLIENT_ID=${CLIENT_ID}
-ENV AGENT_CONFIG_PATH=config/clients/${CLIENT_ID}/agent.properties
+ENV AGENT_NAME=voice-agent
+ENV DEFAULT_CLIENT_ID=client-1
 
 # Change ownership of all app files to the non-privileged user
 # This ensures the application can read/write files as needed

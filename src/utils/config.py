@@ -15,6 +15,10 @@ def _unescape(value: str) -> str:
     return value.replace("\\n", "\n").strip()
 
 
+def parse_properties(content: str) -> dict[str, str]:
+    return _parse_properties(content)
+
+
 def _parse_properties(content: str) -> dict[str, str]:
     properties: dict[str, str] = {}
     for line in content.splitlines():
@@ -26,6 +30,11 @@ def _parse_properties(content: str) -> dict[str, str]:
         key, value = stripped.split("=", 1)
         properties[key.strip()] = _unescape(value.strip())
     return properties
+
+
+def read_client_properties(client_id: str) -> dict[str, str]:
+    path = resolve_client_config_path(client_id)
+    return _parse_properties(path.read_text(encoding="utf-8"))
 
 
 def _resolve_path(path_value: str) -> Path:
@@ -82,9 +91,23 @@ def resolve_config_path(
 
 
 @dataclass(frozen=True)
+class WorkerSettings:
+    agent_name: str
+    default_client_id: str
+
+
+def load_worker_settings() -> WorkerSettings:
+    return WorkerSettings(
+        agent_name=os.getenv("AGENT_NAME", "voice-agent"),
+        default_client_id=os.getenv("DEFAULT_CLIENT_ID", DEFAULT_CLIENT_ID),
+    )
+
+
+@dataclass(frozen=True)
 class AgentConfig:
     client_id: str
     agent_name: str
+    telephony_phone_number: str | None
     website_name: str
     website_url: str
     initial_greeting: str
@@ -143,9 +166,12 @@ def load_agent_config(
         )
     )
 
+    telephony_phone = raw.get("telephony.phone_number", "").strip() or None
+
     return AgentConfig(
         client_id=resolved_client_id,
         agent_name=agent_name,
+        telephony_phone_number=telephony_phone,
         website_name=website_name,
         website_url=website_url,
         initial_greeting=fmt(

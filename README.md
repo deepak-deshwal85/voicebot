@@ -63,15 +63,15 @@ Copy `.env.example` to `.env.local` and fill in the required values. At minimum 
 | `LIVEKIT_URL` | LiveKit Cloud WebSocket URL |
 | `LIVEKIT_API_KEY` | LiveKit API key |
 | `LIVEKIT_API_SECRET` | LiveKit API secret |
-| `CLIENT_ID` | Active client (`client-1` or `client-2`) |
-| `AGENT_CONFIG_PATH` | Path to that client's properties file |
+| `AGENT_NAME` | Worker name registered with LiveKit (`voice-agent`) |
+| `DEFAULT_CLIENT_ID` | Fallback tenant for console/dev when no SIP call |
 | `OPENAI_API_KEY` | Embeddings for knowledge base search (optional but recommended) |
 
-Example `.env.local` for **client-1**:
+Example `.env.local`:
 
 ```env
-CLIENT_ID=client-1
-AGENT_CONFIG_PATH=config/clients/client-1/agent.properties
+AGENT_NAME=voice-agent
+DEFAULT_CLIENT_ID=client-1
 LIVEKIT_URL=wss://your-project.livekit.cloud
 LIVEKIT_API_KEY=...
 LIVEKIT_API_SECRET=...
@@ -79,11 +79,10 @@ OPENAI_API_KEY=...
 EMBEDDING_MODEL=text-embedding-3-small
 ```
 
-To run **client-2** locally, change only:
+Simulate a tenant locally without SIP:
 
 ```env
-CLIENT_ID=client-2
-AGENT_CONFIG_PATH=config/clients/client-2/agent.properties
+TENANT_PHONE_OVERRIDE=+911171366881
 ```
 
 You can load LiveKit credentials automatically with the [LiveKit CLI](https://docs.livekit.io/home/cli/cli-setup):
@@ -93,25 +92,29 @@ lk cloud auth
 lk app env -w -d .env.local
 ```
 
-Then add `CLIENT_ID`, `AGENT_CONFIG_PATH`, and `OPENAI_API_KEY` to `.env.local`.
+Then add `AGENT_NAME`, `DEFAULT_CLIENT_ID`, and `OPENAI_API_KEY` to `.env.local`.
 
-## Multi-client configuration
+## Multi-tenant architecture
 
-Each client has its own agent name, website settings, and knowledge base:
+A **single agent worker** (`AGENT_NAME=voice-agent`) runs on your infrastructure and connects to **LiveKit Cloud**. Each tenant (client) has its own config and knowledge base; the worker picks the tenant at runtime from the SIP trunk phone number:
+
+```text
+participant.attributes.get("sip.trunkPhoneNumber")  →  client config  →  knowledge store
+```
 
 ```text
 config/clients/
-├── client-1/agent.properties   → agent.name=client-1-voice-agent
-└── client-2/agent.properties   → agent.name=client-2-voice-agent
+├── client-1/agent.properties   → telephony.phone_number=+911171366880
+└── client-2/agent.properties   → telephony.phone_number=+911171366881
 
 data/clients/
-├── client-1/                   → PDFs + knowledge_website.json + knowledge_pdfs.json
+├── client-1/                   → PDFs + knowledge JSON stores
 └── client-2/
 ```
 
-Edit a client's prompts and URLs in `config/clients/{client-id}/agent.properties`. Place PDFs in `data/clients/{client-id}/`.
+Set `telephony.phone_number` in each client config to match the DID on that tenant's **LiveKit inbound SIP trunk**. See [docs/multi-tenant-telephony.md](docs/multi-tenant-telephony.md) for local testing and Oracle Cloud deployment.
 
-Deploy **one LiveKit agent per client**, each with its own `CLIENT_ID` and `AGENT_CONFIG_PATH`.
+Edit prompts and URLs in `config/clients/{client-id}/agent.properties`. Place PDFs in `data/clients/{client-id}/`.
 
 ## Knowledge base utility
 
@@ -177,14 +180,16 @@ In production, use the `start` command:
 uv run python src/agent.py start
 ```
 
-The agent registers as the name defined in the active client config (for example `client-1-voice-agent`).
+The worker registers as `AGENT_NAME` (default `voice-agent`). Tenant config is chosen per session from the SIP trunk phone number.
 
-### Docker per client
+### Docker (single multi-tenant image)
 
 ```bash
-docker build --build-arg CLIENT_ID=client-1 -t voicebot-client-1 .
-docker build --build-arg CLIENT_ID=client-2 -t voicebot-client-2 .
+docker build -t voicebot .
+docker run --env-file .env.local voicebot
 ```
+
+See [docs/multi-tenant-telephony.md](docs/multi-tenant-telephony.md) for Oracle Cloud deployment.
 
 ## Frontend & Telephony
 
@@ -202,7 +207,7 @@ Get started quickly with our pre-built frontend starter apps, or add telephony s
 
 For advanced customization, see the [complete frontend guide](https://docs.livekit.io/agents/start/frontend/).
 
-For Vobiz SIP number integration, see [docs/vobiz-telephony-integration.md](docs/vobiz-telephony-integration.md).
+For Vobiz SIP integration, see [docs/vobiz-telephony-integration.md](docs/vobiz-telephony-integration.md) and [docs/multi-tenant-telephony.md](docs/multi-tenant-telephony.md).
 
 ## Tests and evals
 
@@ -222,7 +227,7 @@ Workflows live in `.github/workflows/`.
 |----------|---------|---------|
 | **CI** (`ci.yml`) | Push / PR to `main` | Ruff lint, pytest, client config validation |
 | **Knowledge Refresh** (`knowledge-refresh.yml`) | Manual | Rebuild website/PDF knowledge for `client-1`, `client-2`, or `all` |
-| **Deploy Agent** (`deploy-agent.yml`) | Manual | Deploy one or all clients with `lk agent deploy` |
+| **Deploy Agent** (`deploy-agent.yml`) | Manual | Deploy multi-tenant worker with `lk agent deploy` |
 
 ### GitHub repository secrets
 
@@ -244,21 +249,21 @@ Add these under **Settings → Secrets and variables → Actions**:
 
 Refreshed JSON files are uploaded as workflow artifacts.
 
-### Deploy a client agent
+### Deploy the agent worker
 
 1. Ensure `livekit.toml` is **committed to git** (must contain your agent `id`).
-2. Ensure knowledge stores are built (`knowledge.py validate --client client-1`).
+2. Ensure knowledge stores are built for all tenants (`knowledge.py validate --client client-1`).
 3. Add GitHub secrets: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `OPENAI_API_KEY`.
-4. Open **Actions → Deploy Agent → Run workflow** and choose `client-1`, `client-2`, or `all`.
+4. Open **Actions → Deploy Agent → Run workflow**.
 
-The deploy workflow installs the LiveKit CLI and runs `lk agent deploy` with these runtime secrets:
+The deploy workflow runs `lk agent deploy` with:
 
 - `OPENAI_API_KEY`
-- `CLIENT_ID`
-- `AGENT_CONFIG_PATH`
+- `AGENT_NAME=voice-agent`
+- `DEFAULT_CLIENT_ID=client-1`
 - `EMBEDDING_MODEL`
 
-Register separate agents in LiveKit Cloud for each client name (for example `client-1-voice-agent` and `client-2-voice-agent`).
+For **self-hosted workers on Oracle Cloud**, build and run the Docker image directly instead of `lk agent deploy`. See [docs/multi-tenant-telephony.md](docs/multi-tenant-telephony.md).
 
 ## Using this template repo for your own project
 
@@ -272,7 +277,7 @@ Once you've started your own project based on this repo, you should:
 
 ## Deploying to production
 
-This project includes a working `Dockerfile` with per-client support via `CLIENT_ID`. For LiveKit Cloud deployment, use the **Deploy Agent** GitHub workflow or the [deploying to production](https://docs.livekit.io/agents/ops/deployment/) guide.
+This project includes a working `Dockerfile` for a **multi-tenant** worker (all client configs and knowledge stores in one image). For LiveKit Cloud-hosted workers, use the **Deploy Agent** GitHub workflow. For Oracle Cloud or other self-hosted infra, run the Docker container with `--env-file .env.local`. See [docs/multi-tenant-telephony.md](docs/multi-tenant-telephony.md).
 
 Before deploying, refresh and validate the client's knowledge base:
 

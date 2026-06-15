@@ -1,85 +1,86 @@
-# Vobiz Telephony Integration (SIP -> LiveKit -> Agent)
+# Vobiz Telephony Integration (SIP -> LiveKit Cloud -> Multi-Tenant Worker)
 
-This project is now telephony-aware and can accept SIP calls routed through LiveKit.
+Telephony routes through **LiveKit Cloud SIP**. A single **agent worker** on your infrastructure registers as `voice-agent` and resolves the tenant from the SIP participant attribute `sip.trunkPhoneNumber`.
 
-## What was integrated in code
+See [multi-tenant-telephony.md](multi-tenant-telephony.md) for architecture, local testing, and Oracle Cloud deployment.
 
-- `src/agent.py` now auto-detects SIP participants.
-- Telephony sessions use telephony-optimized input settings when available.
-- SIP metadata (caller number, dialed number, trunk id) is captured and logged.
-- Agent instructions are adapted for short, phone-friendly responses during SIP calls.
+## What is integrated in code
+
+- `src/agent.py` resolves tenant from `participant.attributes.get("sip.trunkPhoneNumber")`
+- Client config is loaded per session from `config/clients/{client-id}/agent.properties`
+- `telephony.phone_number` in each client config must match the DID on the LiveKit inbound trunk
 
 ## 1. Configure environment
-
-Start from `.env.example`, then update `.env.local`:
 
 ```env
 LIVEKIT_URL=wss://<your-livekit-project>.livekit.cloud
 LIVEKIT_API_KEY=<your_api_key>
 LIVEKIT_API_SECRET=<your_api_secret>
 
-TELEPHONY_PROVIDER=vobiz
-TELEPHONY_MODE=auto
-
-VOBIZ_SIP_TRUNK_NAME=vobiz-inbound
-VOBIZ_PHONE_NUMBER=<your_vobiz_number>
-VOBIZ_SIP_DOMAIN=<vobiz_sip_domain>
-VOBIZ_SIP_USERNAME=<vobiz_sip_username>
-VOBIZ_SIP_PASSWORD=<vobiz_sip_password>
+AGENT_NAME=voice-agent
+DEFAULT_CLIENT_ID=client-1
+OPENAI_API_KEY=...
 ```
 
-## 2. Create inbound SIP trunk in LiveKit
+Per client (`config/clients/client-1/agent.properties`):
 
-Use your Vobiz SIP gateway details to create an inbound trunk in LiveKit.
+```properties
+telephony.phone_number=+911171366880
+```
 
-Minimum values to map from Vobiz:
-- SIP domain or host
-- SIP username
-- SIP password
-- Phone number (DID)
+## 2. Create inbound SIP trunks in LiveKit Cloud
 
-Use either:
-- LiveKit Cloud dashboard: `Telephony -> SIP Trunks -> Create inbound trunk`
-- LiveKit CLI: run `lk sip --help`, then create an inbound trunk using your Vobiz SIP credentials and number.
+Create **one inbound trunk per tenant** in LiveKit (Telephony → SIP Trunks). Each trunk's phone number must match that client's `telephony.phone_number`.
 
-## 3. Create a dispatch rule to this agent
+```bash
+bash scripts/setup-sip.sh
+bash scripts/setup-sip.sh --fresh --dry-run
+```
 
-Create a dispatch rule so incoming calls on that trunk are routed to this worker (`agent_name="telephone-agent"` in `src/agent.py`).
+Or use `lk sip inbound create` / the LiveKit dashboard manually.
 
-Use either:
-- LiveKit Cloud dashboard: `Telephony -> Dispatch Rules`
-- LiveKit CLI: run `lk sip dispatch --help` and create a rule targeting this agent.
+## 3. Create a dispatch rule to the multi-tenant worker
 
-## 4. Run the worker for telephony
+Dispatch rule must target `voice-agent` (same as `AGENT_NAME`):
 
-```powershell
-uv sync
+```bash
+lk sip dispatch --help
+```
+
+The setup script creates a rule with `"agents": ["voice-agent"]`.
+
+## 4. Run the worker
+
+Local dev:
+
+```bash
 uv run python src/agent.py dev
+```
+
+Production (Docker on your infra):
+
+```bash
+docker build -t voicebot .
+docker run --env-file .env.local voicebot
 ```
 
 ## 5. Validate a call
 
-Call your Vobiz number and check worker logs.
-
-Expected log line format:
+Call a tenant's Vobiz number. Expected log line:
 
 ```text
-SIP call started provider=vobiz caller=<number> dialed=<number> trunk=<trunk-id>
+SIP session client=client-1 trunk_phone=+911171366880 room=call-...
 ```
 
-If you see this line, telephony integration is active and the call reached the agent.
+## Local testing without a phone call
+
+```bash
+uv run python scripts/test_tenant_resolution.py --phone +911171366880
+TENANT_PHONE_OVERRIDE=+911171366880 uv run python src/agent.py dev
+```
 
 ## Troubleshooting
 
-- Calls not reaching agent:
-  - Verify trunk is `active` in LiveKit.
-  - Verify dispatch rule points to `telephone-agent`.
-  - Verify Vobiz SIP credentials and DID mapping.
-- Audio quality issues:
-  - Keep `TELEPHONY_MODE=auto` (or set `on` if all sessions are phone calls).
-- Auth failures:
-  - Re-check Vobiz SIP username/password and allowed source settings on Vobiz.
-
-## Optional next step: outbound calling
-
-If you also want the bot to place outbound calls through Vobiz, add an outbound SIP trunk and use LiveKit outbound call APIs/CLI. The current integration is ready for inbound calls.
+- **Call reaches LiveKit but no agent**: dispatch rule must list `voice-agent`; worker must be running
+- **Wrong tenant**: verify `telephony.phone_number` matches LiveKit trunk DID
+- **Unknown phone error**: add mapping in client config for that DID

@@ -85,12 +85,16 @@ jobs:
         run: |
           uv run python - <<'PY'
           from utils.config import list_client_ids, load_agent_config
+          from utils.tenant import build_phone_to_client_index
 
+          index = build_phone_to_client_index()
+          assert index, "No telephony.phone_number configured"
           for client_id in list_client_ids():
               config = load_agent_config(client_id=client_id)
               assert config.client_id == client_id
-              assert config.agent_name
+              assert config.telephony_phone_number, f"{client_id} missing telephony.phone_number"
               assert config.knowledge_website_path.name == "knowledge_website.json"
               assert str(config.pdf_folder).endswith(client_id)
-              print(f"OK {client_id} -> {config.agent_name}")
+              print(f"OK {client_id} phone={config.telephony_phone_number}")
+          print(f"Tenant index: {index}")
           PY

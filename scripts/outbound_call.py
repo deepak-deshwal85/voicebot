@@ -120,9 +120,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--agent",
-        default=os.environ.get("VOBIZ_AGENT_NAME", "telephone-agent"),
+        default=os.environ.get("AGENT_NAME", "voice-agent"),
         dest="agent_name",
-        help="Agent name to dispatch to the room (default: telephone-agent)",
+        help="Agent name to dispatch to the room (default: AGENT_NAME / voice-agent)",
     )
     parser.add_argument(
         "--wait",

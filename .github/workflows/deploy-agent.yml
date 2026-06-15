@@ -2,41 +2,10 @@ name: Deploy Agent
 
 on:
   workflow_dispatch:
-    inputs:
-      client:
-        description: Client to deploy
-        required: true
-        default: client-1
-        type: choice
-        options:
-          - client-1
-          - client-2
-          - all
 
 jobs:
-  resolve-clients:
-    runs-on: ubuntu-latest
-    outputs:
-      clients: ${{ steps.set-clients.outputs.clients }}
-    steps:
-      - id: set-clients
-        run: |
-          if [ "${{ github.event.inputs.client }}" = "all" ]; then
-            echo 'clients=["client-1","client-2"]' >> "$GITHUB_OUTPUT"
-          else
-            echo 'clients=["${{ github.event.inputs.client }}"]' >> "$GITHUB_OUTPUT"
-          fi
-
   deploy:
     runs-on: ubuntu-latest
-    needs: resolve-clients
-    strategy:
-      fail-fast: false
-      matrix:
-        client: ${{ fromJSON(needs.resolve-clients.outputs.clients) }}
-    concurrency:
-      group: deploy-${{ matrix.client }}-${{ github.ref }}
-      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
 
@@ -58,16 +27,34 @@ jobs:
       - name: Install dependencies
         run: UV_GIT_LFS=1 uv sync --dev
 
-      - name: Validate client knowledge stores
+      - name: Validate tenant phone mappings
+        env:
+          PYTHONPATH: src
+        run: |
+          uv run python - <<'PY'
+          from utils.config import list_client_ids, load_agent_config
+          from utils.tenant import build_phone_to_client_index
+
+          index = build_phone_to_client_index()
+          assert index, "No telephony.phone_number configured for any client"
+          for client_id in list_client_ids():
+              config = load_agent_config(client_id=client_id)
+              assert config.telephony_phone_number, f"{client_id} missing telephony.phone_number"
+              print(f"OK {client_id} -> {config.telephony_phone_number}")
+          print(f"Tenant index: {index}")
+          PY
+
+      - name: Validate all client knowledge stores
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          CLIENT_ID: ${{ matrix.client }}
-        run: uv run python scripts/knowledge.py validate --client "${{ matrix.client }}"
+        run: |
+          for client in client-1 client-2; do
+            uv run python scripts/knowledge.py validate --client "$client"
+          done
 
       - name: Download agent models
         env:
-          CLIENT_ID: ${{ matrix.client }}
-          AGENT_CONFIG_PATH: config/clients/${{ matrix.client }}/agent.properties
+          AGENT_NAME: voice-agent
         run: uv run python src/agent.py download-files
 
       - name: Install LiveKit CLI
@@ -81,8 +68,6 @@ jobs:
           LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
           LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          CLIENT_ID: ${{ matrix.client }}
-          AGENT_CONFIG_PATH: config/clients/${{ matrix.client }}/agent.properties
         run: |
           lk project add github-ci \
             --url "$LIVEKIT_URL" \
@@ -92,6 +77,6 @@ jobs:
 
           lk agent deploy \
             --secrets "OPENAI_API_KEY=${OPENAI_API_KEY}" \
-            --secrets "CLIENT_ID=${CLIENT_ID}" \
-            --secrets "AGENT_CONFIG_PATH=${AGENT_CONFIG_PATH}" \
+            --secrets "AGENT_NAME=voice-agent" \
+            --secrets "DEFAULT_CLIENT_ID=client-1" \
             --secrets "EMBEDDING_MODEL=text-embedding-3-small"
