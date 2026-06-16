@@ -94,27 +94,27 @@ lk app env -w -d .env.local
 
 Then add `AGENT_NAME`, `DEFAULT_CLIENT_ID`, and `OPENAI_API_KEY` to `.env.local`.
 
-## Multi-tenant architecture
+## Multi-tenant configuration
 
-A **single agent worker** (`AGENT_NAME=telephone-agent`) runs on your infrastructure and connects to **LiveKit Cloud**. Each tenant (client) has its own config and knowledge base; the worker picks the tenant at runtime from the SIP trunk phone number:
-
-```text
-participant.attributes.get("sip.trunkPhoneNumber")  →  client config  →  knowledge store
-```
+All client files live in a single `config/` folder:
 
 ```text
-config/clients/
-├── client-1/agent.properties   → telephony.phone_number=+911171366880
-└── client-2/agent.properties   → telephony.phone_number=+911171366881
-
-data/clients/
-├── client-1/                   → PDFs + knowledge JSON stores
-└── client-2/
+config/
+├── tenant-map.json       # phone number -> client id
+├── client-1.properties   # prompts and build settings
+├── client-1.json         # combined website + PDF knowledge base
+├── client-2.properties
+└── client-2.json
 ```
 
-Set `telephony.phone_number` in each client config to match the DID on that tenant's **LiveKit inbound SIP trunk**. See [docs/multi-tenant-telephony.md](docs/multi-tenant-telephony.md) for local testing and Oracle Cloud deployment.
+Phone routing uses `config/tenant-map.json`. Knowledge bases are built **outside** the agent:
 
-Edit prompts and URLs in `config/clients/{client-id}/agent.properties`. Place PDFs in `data/clients/{client-id}/`.
+```bash
+uv run python scripts/knowledge.py build --client client-1
+uv run python scripts/knowledge.py validate --client client-1
+```
+
+PDFs for building go in `knowledge-sources/client-1/` (not loaded at runtime).
 
 ## Knowledge base utility
 

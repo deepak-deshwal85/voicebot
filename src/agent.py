@@ -167,23 +167,6 @@ class Assistant(Agent):
             response += f"[{source}] {result['text']}\n\n"
         return response.strip()
 
-    @function_tool()
-    async def refresh_knowledge_base(self, context: RunContext, max_pages: int = 20):
-        """Rebuild the knowledge base from the configured website and PDF documents."""
-        if not await self._ensure_vector_store():
-            return self.config.knowledge_not_ready_message
-
-        try:
-            logger.info("Refreshing knowledge base...")
-            await self.vector_store.rebuild(max_pages=max_pages)
-            return (
-                f"The knowledge base for {self.config.website_name} has been "
-                "refreshed from the website and PDF documents."
-            )
-        except Exception as exc:
-            logger.error("Error refreshing knowledge base: %s", exc)
-            return "An error occurred while refreshing the knowledge base."
-
 
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()

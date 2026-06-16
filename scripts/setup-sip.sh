@@ -7,7 +7,7 @@
 #   bash scripts/setup-sip.sh --fresh      # delete all trunks/rules, recreate
 #   bash scripts/setup-sip.sh --dry-run    # print planned lk commands
 #
-# Reads telephony.phone_number from each config/clients/*/agent.properties.
+# Reads phone mappings from config/tenant-map.json.
 # Optional per-client overrides:
 #   telephony.sip.trunk_name=client-1-inbound
 #   telephony.sip.username=...

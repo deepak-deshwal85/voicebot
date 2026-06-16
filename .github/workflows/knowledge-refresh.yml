@@ -12,15 +12,6 @@ on:
           - client-1
           - client-2
           - all
-      source:
-        description: Knowledge source to refresh
-        required: true
-        default: all
-        type: choice
-        options:
-          - all
-          - website
-          - pdfs
       max_pages:
         description: Maximum website pages to crawl
         required: true
@@ -29,6 +20,8 @@ on:
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -45,7 +38,7 @@ jobs:
       - name: Install dependencies
         run: UV_GIT_LFS=1 uv sync --dev
 
-      - name: Refresh knowledge base
+      - name: Build knowledge base
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           EMBEDDING_MODEL: text-embedding-3-small
@@ -56,12 +49,12 @@ jobs:
             CLIENTS=("${{ github.event.inputs.client }}")
           fi
           for client in "${CLIENTS[@]}"; do
-            uv run python scripts/knowledge.py refresh "${{ github.event.inputs.source }}" \
+            uv run python scripts/knowledge.py build \
               --client "$client" \
               --max-pages "${{ github.event.inputs.max_pages }}"
           done
 
-      - name: Validate refreshed stores
+      - name: Validate knowledge base
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
@@ -74,11 +67,14 @@ jobs:
             uv run python scripts/knowledge.py validate --client "$client"
           done
 
-      - name: Upload refreshed knowledge stores
-        uses: actions/upload-artifact@v4
-        with:
-          name: knowledge-stores-${{ github.event.inputs.client }}-${{ github.run_id }}
-          path: |
-            data/clients/**/knowledge_website.json
-            data/clients/**/knowledge_pdfs.json
-          if-no-files-found: warn
+      - name: Commit updated knowledge files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add config/*.json
+          if git diff --staged --quiet; then
+            echo "No knowledge file changes to commit."
+          else
+            git commit -m "chore: refresh knowledge base (${{ github.event.inputs.client }})"
+            git push
+          fi

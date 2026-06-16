@@ -1,15 +1,14 @@
 """Manual smoke test for local agent + knowledge store initialization."""
 
 import asyncio
-import os
 import sys
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR / "src"))
 
-from agent import Assistant
-from utils.config import load_agent_config
+from agent import Assistant  # noqa: E402
+from utils.config import load_agent_config  # noqa: E402
 
 
 async def main() -> None:

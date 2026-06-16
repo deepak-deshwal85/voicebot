@@ -84,17 +84,14 @@ jobs:
           PYTHONPATH: src
         run: |
           uv run python - <<'PY'
-          from utils.config import list_client_ids, load_agent_config
-          from utils.tenant import build_phone_to_client_index
+          from utils.config import list_client_ids, load_agent_config, load_tenant_map
 
-          index = build_phone_to_client_index()
-          assert index, "No telephony.phone_number configured"
+          mapping = load_tenant_map()
+          assert mapping, "config/tenant-map.json is empty"
           for client_id in list_client_ids():
               config = load_agent_config(client_id=client_id)
               assert config.client_id == client_id
-              assert config.telephony_phone_number, f"{client_id} missing telephony.phone_number"
-              assert config.knowledge_website_path.name == "knowledge_website.json"
-              assert str(config.pdf_folder).endswith(client_id)
-              print(f"OK {client_id} phone={config.telephony_phone_number}")
-          print(f"Tenant index: {index}")
+              assert config.knowledge_path.name == f"{client_id}.json"
+              assert client_id in mapping.values()
+              print(f"OK {client_id} -> {config.knowledge_path.name}")
           PY

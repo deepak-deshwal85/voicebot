@@ -27,24 +27,21 @@ jobs:
       - name: Install dependencies
         run: UV_GIT_LFS=1 uv sync --dev
 
-      - name: Validate tenant phone mappings
+      - name: Validate tenant map
         env:
           PYTHONPATH: src
         run: |
           uv run python - <<'PY'
-          from utils.config import list_client_ids, load_agent_config
-          from utils.tenant import build_phone_to_client_index
+          from utils.config import list_client_ids, load_tenant_map
 
-          index = build_phone_to_client_index()
-          assert index, "No telephony.phone_number configured for any client"
+          mapping = load_tenant_map()
+          assert mapping, "config/tenant-map.json is empty"
           for client_id in list_client_ids():
-              config = load_agent_config(client_id=client_id)
-              assert config.telephony_phone_number, f"{client_id} missing telephony.phone_number"
-              print(f"OK {client_id} -> {config.telephony_phone_number}")
-          print(f"Tenant index: {index}")
+              assert client_id in mapping.values(), f"{client_id} missing from tenant-map.json"
+          print(f"Tenant map OK: {mapping}")
           PY
 
-      - name: Validate all client knowledge stores
+      - name: Validate client knowledge stores
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |

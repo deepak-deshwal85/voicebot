@@ -1,6 +1,12 @@
 import pytest
 
-from utils.config import list_client_ids, load_agent_config, resolve_client_config_path
+from utils.config import (
+    client_knowledge_path,
+    client_properties_path,
+    list_client_ids,
+    load_agent_config,
+    load_tenant_map,
+)
 
 
 def test_list_client_ids() -> None:
@@ -9,20 +15,20 @@ def test_list_client_ids() -> None:
     assert "client-2" in clients
 
 
-def test_load_client_config_paths() -> None:
+def test_client_paths() -> None:
     for client_id in ("client-1", "client-2"):
         config = load_agent_config(client_id=client_id)
         assert config.client_id == client_id
-        assert config.telephony_phone_number
-        assert config.knowledge_website_path.as_posix().endswith(
-            f"data/clients/{client_id}/knowledge_website.json"
-        )
-        assert config.knowledge_pdfs_path.as_posix().endswith(
-            f"data/clients/{client_id}/knowledge_pdfs.json"
-        )
-        assert config.pdf_folder.as_posix().endswith(f"data/clients/{client_id}")
+        assert config.properties_path == client_properties_path(client_id)
+        assert config.knowledge_path == client_knowledge_path(client_id)
 
 
-def test_resolve_client_config_path_rejects_unknown_client() -> None:
+def test_tenant_map() -> None:
+    mapping = load_tenant_map()
+    assert mapping["911171366880"] == "client-1"
+    assert mapping["911171366881"] == "client-2"
+
+
+def test_unknown_client_raises() -> None:
     with pytest.raises(ValueError, match="Unknown client"):
-        resolve_client_config_path("missing-client")
+        load_agent_config(client_id="missing-client")

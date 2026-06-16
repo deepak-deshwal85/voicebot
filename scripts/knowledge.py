@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Build and validate per-client knowledge bases under config/."""
+
 from __future__ import annotations
 
 import argparse
@@ -6,183 +8,118 @@ import asyncio
 import sys
 from pathlib import Path
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
-SRC_DIR = ROOT_DIR / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from dotenv import load_dotenv  # noqa: E402
 
 from utils.config import list_client_ids, load_agent_config  # noqa: E402
-from utils.knowledge_cli import (  # noqa: E402
-    get_status,
-    load_environment,
-    migrate_legacy,
-    print_search_results,
-    print_status,
-    refresh_knowledge,
-    run_for_clients,
-    search_knowledge,
-    validate_knowledge,
-)
+from utils.knowledge_builder import KnowledgeBuilder  # noqa: E402
+from utils.knowledge_store import KnowledgeStore  # noqa: E402
 
 
-def _add_client_arg(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--client",
-        action="append",
-        dest="clients",
-        help="Client id (repeatable). Defaults to CLIENT_ID or client-1",
-    )
+def _load_env() -> None:
+    load_dotenv(ROOT / ".env")
+    load_dotenv(ROOT / ".env.local", override=True)
 
 
-def _resolve_clients(clients: list[str] | None) -> list[str]:
-    if clients:
-        return clients
-    config = load_agent_config()
-    return [config.client_id]
+def _clients_arg(clients: list[str] | None) -> list[str]:
+    return clients or list_client_ids()
 
 
-async def _cmd_status(config) -> None:
-    print_status(await get_status(config))
+async def cmd_build(client_id: str, max_pages: int | None) -> None:
+    config = load_agent_config(client_id=client_id)
+    output = await KnowledgeBuilder(config).build(max_pages=max_pages)
+    print(f"Built {output}")
 
 
-async def _cmd_validate(config) -> bool:
-    issues = await validate_knowledge(config)
-    print_status(await get_status(config))
+async def cmd_validate(client_id: str) -> bool:
+    config = load_agent_config(client_id=client_id)
+    issues: list[str] = []
+
+    if not config.knowledge_path.exists():
+        issues.append(f"Missing knowledge file: {config.knowledge_path}")
+
+    store = KnowledgeStore(config)
+    await store.initialize()
+
+    if not store.documents:
+        issues.append("Knowledge base is empty")
+    elif not any(doc.get("embedding") for doc in store.documents):
+        issues.append("No embeddings found; rebuild with OPENAI_API_KEY set")
+
+    print(f"Client: {client_id}")
+    print(f"Knowledge: {config.knowledge_path}")
+    print(f"Chunks: {len(store.documents)}")
+
     if issues:
-        print("Validation issues:")
+        print("Issues:")
         for issue in issues:
             print(f"- {issue}")
         return False
+
     print("Validation passed.")
     return True
 
 
-async def _cmd_search(config, query: str, top_k: int) -> None:
-    results = await search_knowledge(config, query, top_k=top_k)
-    print_search_results(results)
-
-
-async def _cmd_refresh(
-    config,
-    source: str,
-    max_pages: int,
-) -> None:
-    include_website = source in {"website", "all"}
-    include_pdfs = source in {"pdfs", "all"}
-    status = await refresh_knowledge(
-        config,
-        include_website=include_website,
-        include_pdfs=include_pdfs,
-        max_pages=max_pages,
-    )
-    print_status(status)
-
-
-async def _cmd_migrate(config) -> None:
-    print_status(await migrate_legacy(config))
+async def cmd_search(client_id: str, query: str, top_k: int) -> None:
+    config = load_agent_config(client_id=client_id)
+    store = KnowledgeStore(config)
+    await store.initialize()
+    results = await store.search(query, top_k=top_k)
+    if not results:
+        print("No results.")
+        return
+    for index, result in enumerate(results, start=1):
+        score = result.get("score")
+        suffix = f" score={score:.3f}" if isinstance(score, float) else ""
+        print(f"{index}. [{result.get('source', 'unknown')}]{suffix}")
+        print(result.get("text", "").strip())
+        print()
 
 
 def main() -> int:
-    load_environment(ROOT_DIR)
-    config = load_agent_config()
+    _load_env()
 
-    parser = argparse.ArgumentParser(
-        description="Manage per-client knowledge bases outside the voice agent"
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    parser = argparse.ArgumentParser(description="Manage config/{client}.json knowledge bases")
+    sub = parser.add_subparsers(dest="command", required=True)
 
-    list_parser = subparsers.add_parser("list-clients", help="List configured clients")
-    list_parser.set_defaults(func=lambda _args: _handle_list_clients())
+    sub.add_parser("list-clients", help="List configured clients")
 
-    status_parser = subparsers.add_parser("status", help="Show knowledge base status")
-    _add_client_arg(status_parser)
-    status_parser.set_defaults(func=lambda args: _run_clients(args, _cmd_status))
+    build = sub.add_parser("build", help="Build website+PDF knowledge into config/{client}.json")
+    build.add_argument("--client", action="append", dest="clients")
+    build.add_argument("--max-pages", type=int)
 
-    validate_parser = subparsers.add_parser(
-        "validate", help="Validate knowledge stores"
-    )
-    _add_client_arg(validate_parser)
-    validate_parser.set_defaults(
-        func=lambda args: _run_clients(args, _cmd_validate, expect_bool=True)
-    )
+    validate = sub.add_parser("validate", help="Validate config/{client}.json")
+    validate.add_argument("--client", action="append", dest="clients")
 
-    search_parser = subparsers.add_parser("search", help="Test knowledge retrieval")
-    _add_client_arg(search_parser)
-    search_parser.add_argument("query", help="Search query")
-    search_parser.add_argument("--top-k", type=int, default=3)
-    search_parser.set_defaults(func=_handle_search)
-
-    refresh_parser = subparsers.add_parser("refresh", help="Rebuild knowledge stores")
-    _add_client_arg(refresh_parser)
-    refresh_parser.add_argument(
-        "source",
-        choices=["website", "pdfs", "all"],
-        nargs="?",
-        default="all",
-        help="Which source to refresh (default: all)",
-    )
-    refresh_parser.add_argument(
-        "--max-pages",
-        type=int,
-        default=config.max_pages,
-        help="Maximum website pages to crawl",
-    )
-    refresh_parser.set_defaults(func=_handle_refresh)
-
-    migrate_parser = subparsers.add_parser(
-        "migrate",
-        help="Migrate legacy combined knowledge file if present",
-    )
-    _add_client_arg(migrate_parser)
-    migrate_parser.set_defaults(func=lambda args: _run_clients(args, _cmd_migrate))
+    search = sub.add_parser("search", help="Test retrieval")
+    search.add_argument("--client", required=True)
+    search.add_argument("query")
+    search.add_argument("--top-k", type=int, default=3)
 
     args = parser.parse_args()
-    return args.func(args)
 
+    if args.command == "list-clients":
+        for client_id in list_client_ids():
+            config = load_agent_config(client_id=client_id)
+            print(f"{client_id}: {config.website_name} -> {config.knowledge_path.name}")
+        return 0
 
-def _handle_list_clients() -> int:
-    clients = list_client_ids()
-    if not clients:
-        print("No clients found under config/clients/")
-        return 1
-    for client_id in clients:
-        config = load_agent_config(client_id=client_id)
-        print(f"{client_id}: {config.website_name} -> {config.properties_path}")
-    return 0
+    if args.command == "search":
+        asyncio.run(cmd_search(args.client, args.query, args.top_k))
+        return 0
 
-
-def _run_clients(args, handler, expect_bool: bool = False) -> int:
-    clients = _resolve_clients(args.clients)
     exit_code = 0
-
-    for client_id in clients:
+    for client_id in _clients_arg(args.clients):
         print(f"=== {client_id} ===")
-        config = load_agent_config(client_id=client_id)
-        result = asyncio.run(handler(config))
-        if expect_bool and result is False:
+        if args.command == "build":
+            asyncio.run(cmd_build(client_id, args.max_pages))
+        elif args.command == "validate" and not asyncio.run(cmd_validate(client_id)):
             exit_code = 1
         print()
 
     return exit_code
-
-
-def _handle_search(args) -> int:
-    clients = _resolve_clients(args.clients)
-    exit_code = 0
-    for client_id in clients:
-        print(f"=== {client_id} ===")
-        config = load_agent_config(client_id=client_id)
-        asyncio.run(_cmd_search(config, args.query, args.top_k))
-    return exit_code
-
-
-def _handle_refresh(args) -> int:
-    clients = _resolve_clients(args.clients)
-
-    async def runner(config):
-        await _cmd_refresh(config, args.source, args.max_pages)
-
-    return run_for_clients(clients, runner)
 
 
 if __name__ == "__main__":

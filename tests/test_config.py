@@ -24,7 +24,7 @@ def test_load_agent_config_defaults(tmp_path: Path) -> None:
     assert config.website_url == "https://acme.example/"
     assert config.initial_greeting == "Welcome to Acme Corp."
     assert "Acme Corp" in config.instructions
-    assert config.runtime_scraping_enabled is False
+    assert config.knowledge_path.name.endswith(".json")
 
 
 def test_multiline_instructions_are_unescaped(tmp_path: Path) -> None:
