@@ -1,7 +1,7 @@
 import pytest
 from livekit.agents import AgentSession, inference, llm
 
-from agent import Assistant
+from agent import Assistant, _is_greeting_only
 from utils.config import load_agent_config
 
 
@@ -11,6 +11,13 @@ def _llm() -> llm.LLM:
 
 def _assistant() -> Assistant:
     return Assistant(config=load_agent_config(client_id="client-1"))
+
+
+def test_first_turn_question_is_not_treated_as_greeting() -> None:
+    assert _is_greeting_only("hello")
+    assert _is_greeting_only("good morning")
+    assert not _is_greeting_only("what was the disaster in Havana?")
+    assert not _is_greeting_only("tell me about pensions")
 
 
 @pytest.mark.asyncio

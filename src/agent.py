@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 
 from dotenv import load_dotenv
 from livekit.agents import (
@@ -37,6 +38,40 @@ load_dotenv(".env")
 load_dotenv(".env.local", override=True)
 
 WORKER_SETTINGS = load_worker_settings()
+
+_GREETING_WORDS = {
+    "good",
+    "hello",
+    "hey",
+    "hi",
+    "morning",
+    "afternoon",
+    "evening",
+    "there",
+}
+_QUESTION_STARTERS = {
+    "can",
+    "could",
+    "do",
+    "does",
+    "how",
+    "tell",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+}
+
+
+def _is_greeting_only(text: str) -> bool:
+    words = re.findall(r"[a-z]+", text.lower())
+    if not words:
+        return False
+    if words[0] in _QUESTION_STARTERS:
+        return False
+    return all(word in _GREETING_WORDS for word in words)
 
 
 class Assistant(Agent):
@@ -85,13 +120,16 @@ class Assistant(Agent):
         new_message: ChatMessage,
     ) -> None:
         try:
+            query = new_message.text_content
+
             if self.is_first_interaction:
                 self.is_first_interaction = False
-                turn_ctx.add_message(
-                    role="assistant",
-                    content=self.config.initial_greeting,
-                )
-                return
+                if not query or _is_greeting_only(query):
+                    turn_ctx.add_message(
+                        role="assistant",
+                        content=self.config.initial_greeting,
+                    )
+                    return
 
             if not await self._ensure_vector_store():
                 logger.error("Knowledge store not initialized")
@@ -101,7 +139,6 @@ class Assistant(Agent):
                 )
                 return
 
-            query = new_message.text_content
             if not query:
                 return
 
