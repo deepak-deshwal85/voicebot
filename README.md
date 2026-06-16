@@ -255,6 +255,18 @@ The deploy workflow runs `lk agent deploy` with:
 - `DEFAULT_CLIENT_ID=client-1`
 - `EMBEDDING_MODEL`
 
+For **local deploys to LiveKit Cloud**, pass the same secrets explicitly or query embeddings will fail at runtime and PDF retrieval will not work even though `config/client-1.json` contains PDF chunks:
+
+```bash
+lk agent deploy \
+  --secrets "OPENAI_API_KEY=$OPENAI_API_KEY" \
+  --secrets "AGENT_NAME=telephone-agent" \
+  --secrets "DEFAULT_CLIENT_ID=client-1" \
+  --secrets "EMBEDDING_MODEL=text-embedding-3-small"
+```
+
+After deploy, confirm the runtime log shows `query_embeddings=enabled` and `pdf=...` when the knowledge base loads.
+
 For **self-hosted workers on Oracle Cloud**, build and run the Docker image directly instead of `lk agent deploy`. See [docs/multi-tenant-telephony.md](docs/multi-tenant-telephony.md).
 
 ## Using this template repo for your own project

@@ -8,7 +8,9 @@ from utils.knowledge_store import KnowledgeStore
 
 
 @pytest.mark.asyncio
-async def test_search_combined_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_search_combined_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     client_id = "client-1"
@@ -45,7 +47,51 @@ async def test_search_combined_store(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.asyncio
-async def test_missing_store_is_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_embedding_search_falls_back_without_api_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    client_id = "client-1"
+    (config_dir / f"{client_id}.properties").write_text(
+        "client.id=client-1\nwebsite.name=Test\nwebsite.url=https://example.com/\n",
+        encoding="utf-8",
+    )
+    (config_dir / f"{client_id}.json").write_text(
+        json.dumps(
+            {
+                "documents": [
+                    {
+                        "text": "A huge wave hit the Havana Riviera Hotel.",
+                        "metadata": {"source": "pdf", "filename": "story.pdf"},
+                        "embedding": [0.1, 0.2, 0.3],
+                    },
+                    {
+                        "text": "Our pension transfer service helps customers.",
+                        "metadata": {"source": "website"},
+                        "embedding": [0.4, 0.5, 0.6],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("utils.config.CONFIG_DIR", config_dir)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    config = load_agent_config(client_id=client_id)
+    store = KnowledgeStore(config)
+    await store.initialize()
+
+    results = await store.search("what was the disaster in havana?", top_k=2)
+    assert results
+    assert any(result["source"] == "pdf" for result in results)
+
+
+@pytest.mark.asyncio
+async def test_missing_store_is_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     client_id = "client-1"

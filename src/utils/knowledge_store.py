@@ -12,16 +12,22 @@ from utils.embeddings import EmbeddingService, cosine_similarity
 logger = logging.getLogger(__name__)
 
 
-def _load_documents(path: Path) -> list[dict[str, Any]]:
+def _load_knowledge_payload(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if not path.exists():
-        return []
+        return [], {}
 
     payload = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(payload, list):
-        return payload
+        return payload, {}
     if isinstance(payload, dict):
-        return payload.get("documents", [])
-    return []
+        documents = payload.get("documents", [])
+        metadata = {
+            key: payload[key]
+            for key in ("version", "client_id", "built_at", "embedding_model")
+            if key in payload
+        }
+        return documents, metadata
+    return [], {}
 
 
 class KnowledgeStore:
@@ -38,15 +44,36 @@ class KnowledgeStore:
             return
 
         try:
-            self.documents = await asyncio.to_thread(_load_documents, path)
+            self.documents, metadata = await asyncio.to_thread(
+                _load_knowledge_payload, path
+            )
         except Exception as exc:
             logger.error("Failed to load knowledge base %s: %s", path, exc)
             self.documents = []
+            return
+
+        pdf_count = sum(
+            1
+            for doc in self.documents
+            if doc.get("metadata", {}).get("source") == "pdf"
+        )
+        website_count = sum(
+            1
+            for doc in self.documents
+            if doc.get("metadata", {}).get("source") == "website"
+        )
+        embedded_count = sum(1 for doc in self.documents if doc.get("embedding"))
 
         logger.info(
-            "Loaded %s chunks from %s",
+            "Loaded %s chunks from %s (pdf=%s website=%s embedded=%s built_at=%s "
+            "query_embeddings=%s)",
             len(self.documents),
             path.name,
+            pdf_count,
+            website_count,
+            embedded_count,
+            metadata.get("built_at", "unknown"),
+            "enabled" if self.embeddings.enabled else "disabled",
         )
 
     async def search(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
@@ -54,7 +81,14 @@ class KnowledgeStore:
             return []
 
         if any(doc.get("embedding") for doc in self.documents):
-            return await self._search_embeddings_balanced(query, top_k)
+            results = await self._search_embeddings_balanced(query, top_k)
+            if results:
+                return results
+            logger.warning(
+                "Embedding search returned no results; falling back to keyword search. "
+                "If this happens on LiveKit Cloud, ensure OPENAI_API_KEY is set via "
+                "`lk agent deploy --secrets OPENAI_API_KEY=...`."
+            )
 
         return self._search_keywords_balanced(query, top_k)
 
@@ -86,7 +120,9 @@ class KnowledgeStore:
 
     def _search_keywords_balanced(self, query: str, top_k: int) -> list[dict[str, Any]]:
         pdf_docs = [
-            doc for doc in self.documents if doc.get("metadata", {}).get("source") == "pdf"
+            doc
+            for doc in self.documents
+            if doc.get("metadata", {}).get("source") == "pdf"
         ]
         web_docs = [
             doc
