@@ -124,30 +124,23 @@ Knowledge is managed **outside** the voice agent with `scripts/knowledge.py`:
 # List clients
 uv run python scripts/knowledge.py list-clients
 
-# Status
-uv run python scripts/knowledge.py status --client client-1
-
-# Rebuild website + PDFs for one client
-uv run python scripts/knowledge.py refresh all --client client-1
-
-# Rebuild website only (PDF store unchanged)
-uv run python scripts/knowledge.py refresh website --client client-2
-
-# Rebuild PDFs only
-uv run python scripts/knowledge.py refresh pdfs --client client-1
-
-# Test retrieval
-uv run python scripts/knowledge.py search "pension transfer" --client client-1
+# Build combined knowledge base (website + PDFs) for one client
+uv run python scripts/knowledge.py build --client client-1 --max-pages 100
 
 # Validate before deploy
 uv run python scripts/knowledge.py validate --client client-1
+
+# Test retrieval
+uv run python scripts/knowledge.py search --client client-1 "pension transfer" --top-k 3
+
+# Build for all clients (no --client flag)
+uv run python scripts/knowledge.py build --max-pages 100
 ```
 
 Task shortcuts:
 
 ```bash
 task kb-clients
-task kb-status CLIENT=client-1
 task refresh-knowledge CLIENT=client-1
 task kb-validate CLIENT=client-2
 ```
@@ -244,10 +237,9 @@ Add these under **Settings → Secrets and variables → Actions**:
 
 1. Open **Actions → Knowledge Refresh → Run workflow**
 2. Choose `client` (`client-1`, `client-2`, or `all`)
-3. Choose `source` (`all`, `website`, or `pdfs`)
-4. Set `max_pages` for website crawl (default `100`)
+3. Set `max_pages` for website crawl (default `100`)
 
-Refreshed JSON files are uploaded as workflow artifacts.
+The updated `config/client-*.json` files are committed and pushed back to the repo by the workflow.
 
 ### Deploy the agent worker
 
@@ -282,7 +274,7 @@ This project includes a working `Dockerfile` for a **multi-tenant** worker (all 
 Before deploying, refresh and validate the client's knowledge base:
 
 ```bash
-uv run python scripts/knowledge.py refresh all --client client-1
+uv run python scripts/knowledge.py build --client client-1 --max-pages 100
 uv run python scripts/knowledge.py validate --client client-1
 ```
 
