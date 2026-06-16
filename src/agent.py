@@ -84,14 +84,6 @@ class Assistant(Agent):
         turn_ctx: ChatContext,
         new_message: ChatMessage,
     ) -> None:
-        if not await self._ensure_vector_store():
-            logger.error("Knowledge store not initialized")
-            turn_ctx.add_message(
-                role="assistant",
-                content=self.config.knowledge_not_ready_message,
-            )
-            return
-
         try:
             if self.is_first_interaction:
                 self.is_first_interaction = False
@@ -101,11 +93,19 @@ class Assistant(Agent):
                 )
                 return
 
+            if not await self._ensure_vector_store():
+                logger.error("Knowledge store not initialized")
+                turn_ctx.add_message(
+                    role="assistant",
+                    content=self.config.knowledge_not_ready_message,
+                )
+                return
+
             query = new_message.text_content
             if not query:
                 return
 
-            results = await self.vector_store.search(query, top_k=3)
+            results = await self.vector_store.search(query, top_k=5)
             if not results:
                 logger.info("No relevant information found for query: %s", query)
                 turn_ctx.add_message(
@@ -114,19 +114,30 @@ class Assistant(Agent):
                 )
                 return
 
+            sources = [r.get("source", "unknown") for r in results]
+            logger.info("RAG results for %r: sources=%s", query, sources)
+
             context_lines = []
             for doc in results:
                 text = doc.get("text", "").strip()
                 if not text:
                     continue
                 source = doc.get("source", "knowledge base")
-                context_lines.append(f"[{source}] {text}")
+                filename = doc.get("filename")
+                if source == "pdf" and filename:
+                    label = f"pdf:{filename}"
+                elif source == "website":
+                    label = "website"
+                else:
+                    label = source
+                context_lines.append(f"[{label}] {text}")
 
             turn_ctx.add_message(
                 role="assistant",
                 content=(
                     f"Use the following {self.config.website_name} knowledge base "
-                    f"context to answer the user concisely:\n"
+                    f"context (website pages and uploaded PDF documents) to answer "
+                    f"the user concisely. If PDF context is relevant, use it:\n"
                     + "\n".join(f"• {line}" for line in context_lines)
                 ),
             )
@@ -243,8 +254,12 @@ async def entrypoint(ctx: JobContext):
 
     ctx.add_shutdown_callback(log_usage)
 
+    assistant = Assistant(config=agent_config)
+    logger.info("Preloading knowledge base for %s...", agent_config.client_id)
+    await assistant._ensure_vector_store()
+
     await session.start(
-        agent=Assistant(config=agent_config),
+        agent=assistant,
         room=ctx.room,
         room_input_options=RoomInputOptions(
             noise_cancellation=noise_cancellation.BVC(),
