@@ -91,11 +91,7 @@ jobs:
           for client_id in list_client_ids():
               config = load_agent_config(client_id=client_id)
               assert config.client_id == client_id
-              assert config.website_knowledge_path.name == f"{client_id}-website.json"
-              assert config.pdf_knowledge_path.name == f"{client_id}-pdf.json"
+              assert config.resume_knowledge_path.name == f"{client_id}-resume.json"
               assert client_id in mapping.values()
-              print(
-                  f"OK {client_id} -> "
-                  f"{config.website_knowledge_path.name}, {config.pdf_knowledge_path.name}"
-              )
+              print(f"OK {client_id} -> {config.resume_knowledge_path.name}")
           PY

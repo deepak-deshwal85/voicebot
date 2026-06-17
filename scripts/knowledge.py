@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and validate per-client knowledge bases under config/."""
+"""Build and validate per-client resume knowledge bases under config/."""
 
 from __future__ import annotations
 
@@ -29,41 +29,47 @@ def _clients_arg(clients: list[str] | None) -> list[str]:
     return clients or list_client_ids()
 
 
-async def cmd_build(client_id: str, max_pages: int | None) -> None:
+async def cmd_build(client_id: str) -> None:
     config = load_agent_config(client_id=client_id)
-    website_path, pdf_path = await KnowledgeBuilder(config).build(max_pages=max_pages)
-    print(f"Built website={website_path} pdf={pdf_path}")
+    output = await KnowledgeBuilder(config).build()
+    print(f"Built resume knowledge: {output}")
 
 
 async def cmd_validate(client_id: str) -> bool:
     config = load_agent_config(client_id=client_id)
     issues: list[str] = []
 
-    has_website = config.website_knowledge_path.exists()
-    has_pdf = config.pdf_knowledge_path.exists()
-    if not has_website and not has_pdf:
-        issues.append(f"Missing knowledge files for {client_id}")
+    if not config.resume_knowledge_path.exists():
+        issues.append(f"Missing resume knowledge file for {client_id}")
 
     store = KnowledgeStore(config)
     await store.initialize()
-    await store.website.ensure_loaded()
-    await store.pdf.ensure_loaded()
+    await store.ensure_loaded()
 
-    website_count = len(store.website.documents)
-    pdf_count = len(store.pdf.documents)
-    if website_count == 0 and pdf_count == 0:
-        issues.append("Knowledge base is empty")
+    chunk_count = len(store.documents)
+    if chunk_count == 0:
+        issues.append("Resume knowledge base is empty")
 
-    website_embedded = any(doc.get("embedding") for doc in store.website.documents)
-    pdf_embedded = any(doc.get("embedding") for doc in store.pdf.documents)
-    if (website_count and not website_embedded) or (pdf_count and not pdf_embedded):
+    has_embeddings = any(doc.get("embedding") for doc in store.documents)
+    if chunk_count and not has_embeddings:
         issues.append("No embeddings found; rebuild with OPENAI_API_KEY set")
 
+    if chunk_count:
+        missing_sections = sum(
+            1 for doc in store.documents if not doc.get("metadata", {}).get("section")
+        )
+        missing_search_text = sum(1 for doc in store.documents if not doc.get("search_text"))
+        if missing_sections:
+            issues.append(
+                f"{missing_sections} chunk(s) missing section metadata; rebuild knowledge base"
+            )
+        if missing_search_text:
+            issues.append(
+                f"{missing_search_text} chunk(s) missing search_text; rebuild knowledge base"
+            )
+
     print(f"Client: {client_id}")
-    print(
-        f"Website knowledge: {config.website_knowledge_path} ({website_count} chunks)"
-    )
-    print(f"PDF knowledge: {config.pdf_knowledge_path} ({pdf_count} chunks)")
+    print(f"Resume knowledge: {config.resume_knowledge_path} ({chunk_count} chunks)")
 
     if issues:
         print("Issues:")
@@ -75,26 +81,11 @@ async def cmd_validate(client_id: str) -> bool:
     return True
 
 
-async def cmd_search(
-    client_id: str, query: str, top_k: int, source: str
-) -> None:
+async def cmd_search(client_id: str, query: str, top_k: int) -> None:
     config = load_agent_config(client_id=client_id)
     store = KnowledgeStore(config)
     await store.initialize()
-
-    print(f"Source: {source}")
-    if source == "website":
-        results = await store.search_website(query, top_k=top_k)
-    elif source == "pdf":
-        results = await store.search_pdf(query, top_k=top_k)
-    else:
-        website_results, pdf_results = await asyncio.gather(
-            store.search_website(query, top_k=top_k),
-            store.search_pdf(query, top_k=top_k),
-        )
-        parts = [part for part in (website_results, pdf_results) if part]
-        results = "\n\n".join(parts)
-
+    results = await store.search(query, top_k=top_k)
     if not results:
         print("No results.")
         return
@@ -105,31 +96,24 @@ def main() -> int:
     _load_env()
 
     parser = argparse.ArgumentParser(
-        description="Manage config/{client}-website.json and {client}-pdf.json knowledge bases"
+        description="Manage config/{client}-resume.json knowledge bases"
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("list-clients", help="List configured clients")
 
     build = sub.add_parser(
-        "build", help="Build website+PDF knowledge into split config files"
+        "build", help="Build resume knowledge into config/{client}-resume.json"
     )
     build.add_argument("--client", action="append", dest="clients")
-    build.add_argument("--max-pages", type=int)
 
-    validate = sub.add_parser("validate", help="Validate split knowledge files")
+    validate = sub.add_parser("validate", help="Validate resume knowledge file")
     validate.add_argument("--client", action="append", dest="clients")
 
-    search = sub.add_parser("search", help="Test retrieval")
+    search = sub.add_parser("search", help="Test resume retrieval")
     search.add_argument("--client", required=True)
     search.add_argument("query")
     search.add_argument("--top-k", type=int, default=3)
-    search.add_argument(
-        "--source",
-        choices=("website", "pdf", "both"),
-        default="both",
-        help="Knowledge pool to search (default: both)",
-    )
 
     args = parser.parse_args()
 
@@ -137,20 +121,20 @@ def main() -> int:
         for client_id in list_client_ids():
             config = load_agent_config(client_id=client_id)
             print(
-                f"{client_id}: {config.website_name} -> "
-                f"{config.website_knowledge_path.name}, {config.pdf_knowledge_path.name}"
+                f"{client_id}: {config.display_name} -> "
+                f"{config.resume_knowledge_path.name}"
             )
         return 0
 
     if args.command == "search":
-        asyncio.run(cmd_search(args.client, args.query, args.top_k, args.source))
+        asyncio.run(cmd_search(args.client, args.query, args.top_k))
         return 0
 
     exit_code = 0
     for client_id in _clients_arg(args.clients):
         print(f"=== {client_id} ===")
         if args.command == "build":
-            asyncio.run(cmd_build(client_id, args.max_pages))
+            asyncio.run(cmd_build(client_id))
         elif args.command == "validate" and not asyncio.run(cmd_validate(client_id)):
             exit_code = 1
         print()

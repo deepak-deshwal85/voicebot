@@ -10,11 +10,10 @@ def test_load_agent_config_defaults(tmp_path: Path) -> None:
     properties.write_text(
         "\n".join(
             [
-                "website.name=Acme Corp",
-                "website.url=https://acme.example/",
-                "agent.initial_greeting=Welcome to {website_name}.",
-                "agent.instructions=You assist users of {website_name}.",
-                "agent.no_results_message=No info for {website_name}.",
+                "agent.display_name=Acme Resume",
+                "agent.initial_greeting=Welcome to {display_name}.",
+                "agent.instructions=You assist users of {display_name}.",
+                "agent.no_results_message=No info for {display_name}.",
             ]
         ),
         encoding="utf-8",
@@ -22,20 +21,17 @@ def test_load_agent_config_defaults(tmp_path: Path) -> None:
 
     config = load_agent_config(properties_path=properties)
 
-    assert config.website_name == "Acme Corp"
-    assert config.website_url == "https://acme.example/"
-    assert config.initial_greeting == "Welcome to Acme Corp."
-    assert "Acme Corp" in config.instructions
-    assert config.website_knowledge_path.name.endswith("-website.json")
-    assert config.pdf_knowledge_path.name.endswith("-pdf.json")
+    assert config.display_name == "Acme Resume"
+    assert config.initial_greeting == "Welcome to Acme Resume."
+    assert "Acme Resume" in config.instructions
+    assert config.resume_knowledge_path.name.endswith("-resume.json")
 
 
 def test_multiline_instructions_are_unescaped(tmp_path: Path) -> None:
     properties = tmp_path / "agent.properties"
     properties.write_text(
-        "website.name=Demo\n"
-        "website.url=https://demo.example/\n"
-        "agent.instructions=Line one.\\nLine two for {website_name}.",
+        "agent.display_name=Demo\n"
+        "agent.instructions=Line one.\\nLine two for {display_name}.",
         encoding="utf-8",
     )
 
@@ -47,20 +43,16 @@ def test_multiline_instructions_are_unescaped(tmp_path: Path) -> None:
 def test_knowledge_preload_settings_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("PRELOAD_PDF_KNOWLEDGE", raising=False)
-    monkeypatch.delenv("PRELOAD_WEBSITE_KNOWLEDGE", raising=False)
+    monkeypatch.delenv("PRELOAD_RESUME_KNOWLEDGE", raising=False)
 
     settings = load_knowledge_preload_settings()
-    assert settings.pdf is True
-    assert settings.website is True
+    assert settings.enabled is True
 
 
 def test_knowledge_preload_settings_from_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("PRELOAD_PDF_KNOWLEDGE", "false")
-    monkeypatch.setenv("PRELOAD_WEBSITE_KNOWLEDGE", "true")
+    monkeypatch.setenv("PRELOAD_RESUME_KNOWLEDGE", "false")
 
     settings = load_knowledge_preload_settings()
-    assert settings.pdf is False
-    assert settings.website is True
+    assert settings.enabled is False

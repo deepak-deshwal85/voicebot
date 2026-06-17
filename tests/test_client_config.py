@@ -1,9 +1,8 @@
 import pytest
 
 from utils.config import (
-    client_pdf_knowledge_path,
     client_properties_path,
-    client_website_knowledge_path,
+    client_resume_knowledge_path,
     list_client_ids,
     load_agent_config,
     load_tenant_map,
@@ -21,8 +20,7 @@ def test_client_paths() -> None:
         config = load_agent_config(client_id=client_id)
         assert config.client_id == client_id
         assert config.properties_path == client_properties_path(client_id)
-        assert config.website_knowledge_path == client_website_knowledge_path(client_id)
-        assert config.pdf_knowledge_path == client_pdf_knowledge_path(client_id)
+        assert config.resume_knowledge_path == client_resume_knowledge_path(client_id)
 
 
 def test_tenant_map() -> None:

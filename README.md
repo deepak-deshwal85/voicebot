@@ -66,8 +66,7 @@ Copy `.env.example` to `.env.local` and fill in the required values. At minimum 
 | `AGENT_NAME` | Worker name registered with LiveKit (`telephone-agent`) |
 | `DEFAULT_CLIENT_ID` | Fallback tenant for console/dev when no SIP call |
 | `OPENAI_API_KEY` | Embeddings for knowledge base search (optional but recommended) |
-| `PRELOAD_PDF_KNOWLEDGE` | Preload PDF index at call connect (`true` default) |
-| `PRELOAD_WEBSITE_KNOWLEDGE` | Preload website index at call connect (`true` default; ~60MB) |
+| `PRELOAD_RESUME_KNOWLEDGE` | Preload resume index at call connect (`true` default) |
 
 Example `.env.local`:
 
@@ -79,8 +78,7 @@ LIVEKIT_API_KEY=...
 LIVEKIT_API_SECRET=...
 OPENAI_API_KEY=...
 EMBEDDING_MODEL=text-embedding-3-small
-PRELOAD_PDF_KNOWLEDGE=true
-PRELOAD_WEBSITE_KNOWLEDGE=true
+PRELOAD_RESUME_KNOWLEDGE=true
 ```
 
 Simulate a tenant locally without SIP:
@@ -106,54 +104,44 @@ All client files live in a single `config/` folder:
 config/
 ├── tenant-map.json           # phone number -> client id
 ├── client-1.properties       # prompts and build settings
-├── client-1-website.json     # website index (runtime, lazy-loaded)
-├── client-1-pdf.json         # PDF index (runtime, lazy-loaded)
+├── client-1-resume.json      # resume knowledge index
 ├── client-2.properties
-├── client-2-website.json
-└── client-2-pdf.json
+└── client-2-resume.json
 ```
 
-Phone routing uses `config/tenant-map.json`. Knowledge bases are built **outside** the agent and loaded **on demand** at runtime through search tools:
-
-- Financial services, products, fees → `search_website_docs`
-- Personal info, education, projects, skills, resume → `search_document_library`
+Phone routing uses `config/tenant-map.json`. Resume knowledge is built **outside** the agent and searched via the `search_resume` tool at runtime.
 
 ```bash
 uv run python scripts/knowledge.py build --client client-1
 uv run python scripts/knowledge.py validate --client client-1
-uv run python scripts/knowledge.py search --client client-1 "pension transfer"
 uv run python scripts/knowledge.py search --client client-1 "what skills are on the resume?"
 ```
 
-PDFs for building go in `knowledge-sources/client-1/` (not loaded at runtime).
+Resume PDFs for building go in `knowledge-sources/client-1/`.
 
 ## Knowledge base utility
 
-Knowledge is managed **outside** the voice agent with `scripts/knowledge.py`. The `build` command writes two files per client:
+Knowledge is managed **outside** the voice agent with `scripts/knowledge.py`. The `build` command writes one file per client:
 
 | File | Purpose |
 |------|---------|
-| `config/{client}-website.json` | Website-only index used by `search_website_docs` |
-| `config/{client}-pdf.json` | PDF-only index used by `search_document_library` |
-
-At runtime the agent loads only the index it needs (for example, PDF questions load the small PDF file, not the full website store).
+| `config/{client}-resume.json` | Resume index used by `search_resume` |
 
 ```bash
 # List clients
 uv run python scripts/knowledge.py list-clients
 
-# Build website + PDF knowledge bases for one client
-uv run python scripts/knowledge.py build --client client-1 --max-pages 100
+# Build resume knowledge for one client
+uv run python scripts/knowledge.py build --client client-1
 
-# Validate website and PDF indexes before deploy
+# Validate before deploy
 uv run python scripts/knowledge.py validate --client client-1
 
-# Test routed retrieval (prints route: website | pdf | both)
-uv run python scripts/knowledge.py search --client client-1 "pension transfer" --top-k 3
+# Test retrieval
 uv run python scripts/knowledge.py search --client client-1 "what skills are on the resume?" --top-k 3
 
 # Build for all clients (omit --client)
-uv run python scripts/knowledge.py build --max-pages 100
+uv run python scripts/knowledge.py build
 uv run python scripts/knowledge.py validate
 ```
 
@@ -165,7 +153,7 @@ task refresh-knowledge CLIENT=client-1
 task kb-validate CLIENT=client-2
 ```
 
-Rebuild knowledge after changing PDFs or website content, then redeploy the agent worker.
+Rebuild knowledge after changing resume PDFs, then redeploy the agent worker.
 
 ## Run the agent
 
@@ -239,7 +227,7 @@ Workflows live in `.github/workflows/`.
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | **CI** (`ci.yml`) | Push / PR to `main` | Ruff lint, pytest, client config validation |
-| **Knowledge Refresh** (`knowledge-refresh.yml`) | Manual | Rebuild website/PDF knowledge for `client-1`, `client-2`, or `all` |
+| **Knowledge Refresh** (`knowledge-refresh.yml`) | Manual | Rebuild resume knowledge for `client-1`, `client-2`, or `all` |
 | **Deploy Agent** (`deploy-agent.yml`) | Manual | Deploy multi-tenant worker with `lk agent deploy` |
 
 ### GitHub repository secrets
@@ -257,9 +245,7 @@ Add these under **Settings → Secrets and variables → Actions**:
 
 1. Open **Actions → Knowledge Refresh → Run workflow**
 2. Choose `client` (`client-1`, `client-2`, or `all`)
-3. Set `max_pages` for website crawl (default `100`)
-
-The updated `config/client-*-website.json` and `config/client-*-pdf.json` files are committed and pushed back to the repo by the workflow.
+3. The updated `config/client-*-resume.json` files are committed and pushed back to the repo by the workflow.
 
 ### Deploy the agent worker
 
@@ -280,8 +266,7 @@ The deploy workflow runs `lk agent deploy` with:
 - `AGENT_NAME=telephone-agent`
 - `DEFAULT_CLIENT_ID=client-1`
 - `EMBEDDING_MODEL`
-- `PRELOAD_PDF_KNOWLEDGE` (optional, default `true`)
-- `PRELOAD_WEBSITE_KNOWLEDGE` (optional, default `true`; set `false` to save memory)
+- `PRELOAD_RESUME_KNOWLEDGE` (optional, default `true`)
 
 For **local deploys to LiveKit Cloud**, pass the same secrets explicitly or query embeddings will fail at runtime:
 
@@ -291,8 +276,7 @@ lk agent deploy \
   --secrets "AGENT_NAME=telephone-agent" \
   --secrets "DEFAULT_CLIENT_ID=client-1" \
   --secrets "EMBEDDING_MODEL=text-embedding-3-small" \
-  --secrets "PRELOAD_PDF_KNOWLEDGE=true" \
-  --secrets "PRELOAD_WEBSITE_KNOWLEDGE=true"
+  --secrets "PRELOAD_RESUME_KNOWLEDGE=true"
 ```
 
 After deploy, place a test call and confirm logs show tool searches such as `Website search for:` or `PDF search for:` when you ask a question.
@@ -316,7 +300,7 @@ This project includes a working `Dockerfile` for a **multi-tenant** worker (all 
 Before deploying, refresh and validate the client's knowledge bases:
 
 ```bash
-uv run python scripts/knowledge.py build --client client-1 --max-pages 100
+uv run python scripts/knowledge.py build --client client-1
 uv run python scripts/knowledge.py validate --client client-1
 uv run python scripts/knowledge.py search --client client-1 "pension transfer"
 uv run python scripts/knowledge.py search --client client-1 "what skills are on the resume?"

@@ -49,12 +49,8 @@ def client_properties_path(client_id: str) -> Path:
     return path
 
 
-def client_website_knowledge_path(client_id: str) -> Path:
-    return CONFIG_DIR / f"{client_id}-website.json"
-
-
-def client_pdf_knowledge_path(client_id: str) -> Path:
-    return CONFIG_DIR / f"{client_id}-pdf.json"
+def client_resume_knowledge_path(client_id: str) -> Path:
+    return CONFIG_DIR / f"{client_id}-resume.json"
 
 
 def load_tenant_map() -> dict[str, str]:
@@ -102,40 +98,32 @@ def _env_bool(name: str, default: bool) -> bool:
 
 @dataclass(frozen=True)
 class KnowledgePreloadSettings:
-    pdf: bool
-    website: bool
+    enabled: bool
 
 
 def load_knowledge_preload_settings() -> KnowledgePreloadSettings:
     return KnowledgePreloadSettings(
-        pdf=_env_bool("PRELOAD_PDF_KNOWLEDGE", True),
-        website=_env_bool("PRELOAD_WEBSITE_KNOWLEDGE", True),
+        enabled=_env_bool("PRELOAD_RESUME_KNOWLEDGE", True),
     )
 
 
 @dataclass(frozen=True)
 class AgentConfig:
     client_id: str
-    website_name: str
-    website_url: str
+    display_name: str
     initial_greeting: str
     instructions: str
     no_results_message: str
     knowledge_not_ready_message: str
     invalid_search_query_message: str
-    website_knowledge_path: Path
-    pdf_knowledge_path: Path
+    resume_knowledge_path: Path
     properties_path: Path
-    pdf_folder: Path
-    max_pages: int
+    resume_folder: Path
     chunk_size: int
     embedding_model: str
 
     def format(self, template: str) -> str:
-        return template.format(
-            website_name=self.website_name,
-            website_url=self.website_url,
-        )
+        return template.format(display_name=self.display_name)
 
 
 def load_agent_config(
@@ -158,28 +146,26 @@ def load_agent_config(
     raw = _parse_properties(path.read_text(encoding="utf-8"))
     client_id = raw.get("client.id", resolved_client_id)
 
-    website_name = raw.get("website.name", "Your Company")
-    website_url = raw.get("website.url", "https://example.com/")
-    template_values = {"website_name": website_name, "website_url": website_url}
+    display_name = raw.get("agent.display_name", "Resume Assistant")
+    template_values = {"display_name": display_name}
 
     def fmt(key: str, default: str) -> str:
         return raw.get(key, default).format(**template_values)
 
     return AgentConfig(
         client_id=client_id,
-        website_name=website_name,
-        website_url=website_url,
+        display_name=display_name,
         initial_greeting=fmt(
             "agent.initial_greeting",
-            "Hello! I can help you learn about {website_name}. What would you like to know?",
+            "Hello! I can answer questions about the resume on file. What would you like to know?",
         ),
         instructions=fmt(
             "agent.instructions",
-            "You are a helpful voice AI assistant for {website_name}.",
+            "You are a helpful voice assistant for {display_name}.",
         ),
         no_results_message=fmt(
             "agent.no_results_message",
-            "I don't have that information for {website_name}.",
+            "I don't have that information in the resume.",
         ),
         knowledge_not_ready_message=raw.get(
             "agent.knowledge_not_ready_message",
@@ -189,13 +175,11 @@ def load_agent_config(
             "agent.invalid_search_query_message",
             "Please ask a complete question with a few words so I can search accurately.",
         ),
-        website_knowledge_path=client_website_knowledge_path(client_id),
-        pdf_knowledge_path=client_pdf_knowledge_path(client_id),
+        resume_knowledge_path=client_resume_knowledge_path(client_id),
         properties_path=path,
-        pdf_folder=_resolve_path(
-            raw.get("knowledge.pdf_folder", f"knowledge-sources/{client_id}")
+        resume_folder=_resolve_path(
+            raw.get("knowledge.resume_folder", f"knowledge-sources/{client_id}")
         ),
-        max_pages=int(raw.get("knowledge.max_pages", "100")),
         chunk_size=int(raw.get("knowledge.chunk_size", "1000")),
         embedding_model=os.getenv(
             "EMBEDDING_MODEL",

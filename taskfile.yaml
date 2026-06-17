@@ -65,12 +65,11 @@ tasks:
       - "uv run scripts/outbound_call.py {{.PHONE}}"
 
   refresh-knowledge:
-    desc: "Build and validate knowledge base for a client"
+    desc: "Build and validate resume knowledge for a client"
     vars:
       CLIENT: '{{default "client-1" .CLIENT}}'
-      MAX_PAGES: '{{default "100" .MAX_PAGES}}'
     cmds:
-      - "uv run python scripts/knowledge.py build --client {{.CLIENT}} --max-pages {{.MAX_PAGES}} && uv run python scripts/knowledge.py validate --client {{.CLIENT}}"
+      - "uv run python scripts/knowledge.py build --client {{.CLIENT}} && uv run python scripts/knowledge.py validate --client {{.CLIENT}}"
 
   kb-status:
     desc: "Validate knowledge base for a client"

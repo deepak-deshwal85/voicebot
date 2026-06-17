@@ -12,10 +12,6 @@ on:
           - client-1
           - client-2
           - all
-      max_pages:
-        description: Maximum website pages to crawl
-        required: true
-        default: "100"
 
 jobs:
   refresh:
@@ -49,9 +45,7 @@ jobs:
             CLIENTS=("${{ github.event.inputs.client }}")
           fi
           for client in "${CLIENTS[@]}"; do
-            uv run python scripts/knowledge.py build \
-              --client "$client" \
-              --max-pages "${{ github.event.inputs.max_pages }}"
+            uv run python scripts/knowledge.py build --client "$client"
           done
 
       - name: Validate knowledge base

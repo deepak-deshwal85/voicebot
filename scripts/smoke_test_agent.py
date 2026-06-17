@@ -1,4 +1,4 @@
-"""Manual smoke test for local agent + knowledge store initialization."""
+"""Manual smoke test for local agent + resume knowledge store initialization."""
 
 import asyncio
 import sys
@@ -24,8 +24,8 @@ async def main() -> None:
     print("Knowledge store initialized successfully")
     print(f"Documents loaded: {len(store.documents)}")
 
-    results = await store.search_website("investment")
-    print(f"Search test: website results for 'investment': {bool(results)}")
+    results = await store.search("skills")
+    print(f"Search test: resume results for 'skills': {bool(results)}")
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import re
-from collections.abc import Awaitable
+import time
 
 from dotenv import load_dotenv
 from livekit.agents import (
@@ -128,7 +128,7 @@ class Assistant(Agent):
             await asyncio.wait_for(store.initialize(), timeout=30)
         except asyncio.TimeoutError:
             logger.error(
-                "Knowledge index setup timed out for %s", self.config.client_id
+                "Resume knowledge setup timed out for %s", self.config.client_id
             )
             return None
 
@@ -136,50 +136,23 @@ class Assistant(Agent):
         self.vector_store = store
         return store
 
-    async def preload_knowledge(
-        self, *, preload_pdf: bool, preload_website: bool
-    ) -> None:
-        """Warm configured knowledge indexes at call start without blocking the greeting."""
-        if not preload_pdf and not preload_website:
+    async def preload_resume_knowledge(self) -> None:
+        if not PRELOAD_SETTINGS.enabled:
             return
 
         try:
             store = await self._get_store()
             if store is None:
                 return
-
-            names: list[str] = []
-            coros: list[Awaitable[bool]] = []
-            if preload_pdf:
-                names.append("pdf")
-                coros.append(store.preload_pdf())
-            if preload_website:
-                names.append("website")
-                coros.append(store.preload_website())
-
-            results = await asyncio.gather(*coros, return_exceptions=True)
-            for name, result in zip(names, results, strict=True):
-                if isinstance(result, Exception):
-                    logger.exception(
-                        "%s preload failed for %s", name, self.config.client_id
-                    )
-                    continue
-                if not result:
-                    continue
-
-                chunk_count = (
-                    len(store.pdf.documents)
-                    if name == "pdf"
-                    else len(store.website.documents)
-                )
+            loaded = await store.preload()
+            if loaded:
                 logger.info(
-                    "Preloaded %s knowledge for %s (%s chunks)",
-                    name,
+                    "Preloaded resume knowledge for %s (%s chunks)",
                     self.config.client_id,
-                    chunk_count,
+                    len(store.documents),
                 )
         except Exception:
-            logger.exception("Knowledge preload failed for %s", self.config.client_id)
+            logger.exception("Resume preload failed for %s", self.config.client_id)
 
     def _speak_greeting(self) -> None:
         if self._greeting_spoken:
@@ -213,52 +186,29 @@ class Assistant(Agent):
         if self.is_first_interaction:
             self.is_first_interaction = False
 
-    async def _search(
-        self,
-        query: str,
-        *,
-        source: str,
-        search_fn,
-    ) -> str:
+    @function_tool()
+    async def search_resume(self, context: RunContext, query: str) -> str:
+        """Search the resume for education, skills, experience, projects, and employment.
+
+        Args:
+            query: Short topic-focused search query based on the user's question.
+        """
         if not is_valid_search_query(query):
-            logger.info("Skipping %s search for invalid query: %r", source, query)
+            logger.info("Skipping resume search for invalid query: %r", query)
             return self.config.invalid_search_query_message
 
         store = await self._get_store()
         if store is None:
             return self.config.knowledge_not_ready_message
 
-        logger.info("%s search for: %s", source, query)
-        results = await search_fn(store, query)
+        logger.info("Resume search for: %s", query)
+        started = time.perf_counter()
+        results = await store.search(query)
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        logger.info("Resume search completed in %.0fms", elapsed_ms)
         if not results:
             return self.config.no_results_message
         return results
-
-    @function_tool()
-    async def search_website_docs(self, context: RunContext, query: str) -> str:
-        """Search the website for investments, funds, ETFs, pensions, fees, and company information.
-
-        Args:
-            query: Short search query based on the user's question.
-        """
-        return await self._search(
-            query,
-            source="Website",
-            search_fn=lambda store, q: store.search_website(q),
-        )
-
-    @function_tool()
-    async def search_document_library(self, context: RunContext, query: str) -> str:
-        """Search the resume PDF for education, skills, experience, and projects.
-
-        Args:
-            query: Short search query based on the user's question.
-        """
-        return await self._search(
-            query,
-            source="PDF",
-            search_fn=lambda store, q: store.search_pdf(q),
-        )
 
 
 def prewarm(proc: JobProcess):
@@ -322,7 +272,7 @@ async def entrypoint(ctx: JobContext):
         vad=ctx.proc.userdata["vad"],
         preemptive_generation=False,
         min_endpointing_delay=0.5,
-        max_endpointing_delay=1.8,
+        max_endpointing_delay=2.0,
     )
 
     usage_collector = metrics.UsageCollector()
@@ -339,12 +289,9 @@ async def entrypoint(ctx: JobContext):
     ctx.add_shutdown_callback(log_usage)
 
     assistant = Assistant(config=agent_config, is_telephony=bool(trunk_phone))
-    if PRELOAD_SETTINGS.pdf or PRELOAD_SETTINGS.website:
-        assistant._knowledge_preload_task = asyncio.create_task(
-            assistant.preload_knowledge(
-                preload_pdf=PRELOAD_SETTINGS.pdf,
-                preload_website=PRELOAD_SETTINGS.website,
-            )
+    if PRELOAD_SETTINGS.enabled:
+        assistant._resume_preload_task = asyncio.create_task(
+            assistant.preload_resume_knowledge()
         )
 
     await session.start(
