@@ -61,7 +61,9 @@ class KnowledgeBuilder:
         website_path = client_website_knowledge_path(self.config.client_id)
         pdf_path = client_pdf_knowledge_path(self.config.client_id)
         website_path.write_text(
-            json.dumps({**metadata, "source": "website", "documents": website_docs}, indent=2),
+            json.dumps(
+                {**metadata, "source": "website", "documents": website_docs}, indent=2
+            ),
             encoding="utf-8",
         )
         pdf_path.write_text(

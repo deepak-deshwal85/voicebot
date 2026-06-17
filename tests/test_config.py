@@ -52,7 +52,7 @@ def test_knowledge_preload_settings_defaults(
 
     settings = load_knowledge_preload_settings()
     assert settings.pdf is True
-    assert settings.website is False
+    assert settings.website is True
 
 
 def test_knowledge_preload_settings_from_env(

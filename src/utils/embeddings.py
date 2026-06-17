@@ -7,6 +7,9 @@ from collections.abc import Iterable
 
 logger = logging.getLogger(__name__)
 
+_MAX_QUERY_CACHE = 128
+_query_embedding_cache: dict[tuple[str, str], list[float]] = {}
+
 
 class EmbeddingService:
     def __init__(self, model: str) -> None:
@@ -33,8 +36,21 @@ class EmbeddingService:
         return [item.embedding for item in response.data]
 
     async def embed_query(self, query: str) -> list[float]:
+        normalized = query.strip().lower()
+        cache_key = (self.model, normalized)
+        cached = _query_embedding_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         embeddings = await self.embed_texts([query])
-        return embeddings[0] if embeddings else []
+        if not embeddings:
+            return []
+
+        embedding = embeddings[0]
+        if len(_query_embedding_cache) >= _MAX_QUERY_CACHE:
+            _query_embedding_cache.pop(next(iter(_query_embedding_cache)))
+        _query_embedding_cache[cache_key] = embedding
+        return embedding
 
 
 def cosine_similarity(left: Iterable[float], right: Iterable[float]) -> float:

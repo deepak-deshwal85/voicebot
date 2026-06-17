@@ -31,8 +31,8 @@ from utils.config import (
     load_knowledge_preload_settings,
     load_worker_settings,
 )
-from utils.knowledge_router import route_knowledge_source
 from utils.knowledge_store import KnowledgeStore
+from utils.search_query import is_valid_search_query
 from utils.tenant import (
     coerce_phone_value,
     is_telephony_room,
@@ -213,66 +213,52 @@ class Assistant(Agent):
         if self.is_first_interaction:
             self.is_first_interaction = False
 
-    @function_tool()
-    async def search_website_docs(self, context: RunContext, query: str) -> str:
-        """Search the official website index for financial services, products, fees, and company information.
+    async def _search(
+        self,
+        query: str,
+        *,
+        source: str,
+        search_fn,
+    ) -> str:
+        if not is_valid_search_query(query):
+            logger.info("Skipping %s search for invalid query: %r", source, query)
+            return self.config.invalid_search_query_message
 
-        Use this for questions about investments, pensions, ISAs, SIPPs, funds, accounts,
-        transfers, fees, and other financial services.
-
-        Args:
-            query: Short search query based on the user's question.
-        """
         store = await self._get_store()
         if store is None:
             return self.config.knowledge_not_ready_message
 
-        logger.info("Website search for: %s", query)
-        results = await store.search_website(query)
+        logger.info("%s search for: %s", source, query)
+        results = await search_fn(store, query)
         if not results:
             return self.config.no_results_message
         return results
+
+    @function_tool()
+    async def search_website_docs(self, context: RunContext, query: str) -> str:
+        """Search the website for investments, funds, ETFs, pensions, fees, and company information.
+
+        Args:
+            query: Short search query based on the user's question.
+        """
+        return await self._search(
+            query,
+            source="Website",
+            search_fn=lambda store, q: store.search_website(q),
+        )
 
     @function_tool()
     async def search_document_library(self, context: RunContext, query: str) -> str:
-        """Search uploaded PDF documents for personal information, education, projects, and skills.
-
-        Use this for questions about education, work experience, biography, projects,
-        skills, resumes, and document-specific content.
+        """Search the resume PDF for education, skills, experience, and projects.
 
         Args:
             query: Short search query based on the user's question.
         """
-        store = await self._get_store()
-        if store is None:
-            return self.config.knowledge_not_ready_message
-
-        logger.info("PDF search for: %s", query)
-        results = await store.search_pdf(query)
-        if not results:
-            return self.config.no_results_message
-        return results
-
-    @function_tool()
-    async def search_knowledge_base(self, context: RunContext, query: str) -> str:
-        """Search the best knowledge source when the question type is unclear.
-
-        Prefer search_website_docs for financial services questions and
-        search_document_library for personal, education, project, or skill questions.
-
-        Args:
-            query: Short search query based on the user's question.
-        """
-        store = await self._get_store()
-        if store is None:
-            return self.config.knowledge_not_ready_message
-
-        source = route_knowledge_source(query)
-        logger.info("Routed search for %r -> %s", query, source)
-        results = await store.search_routed(query, source=source)
-        if not results:
-            return self.config.no_results_message
-        return results
+        return await self._search(
+            query,
+            source="PDF",
+            search_fn=lambda store, q: store.search_pdf(q),
+        )
 
 
 def prewarm(proc: JobProcess):
@@ -336,7 +322,7 @@ async def entrypoint(ctx: JobContext):
         vad=ctx.proc.userdata["vad"],
         preemptive_generation=False,
         min_endpointing_delay=0.5,
-        max_endpointing_delay=2.5,
+        max_endpointing_delay=1.8,
     )
 
     usage_collector = metrics.UsageCollector()

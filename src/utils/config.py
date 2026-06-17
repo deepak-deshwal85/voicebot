@@ -109,7 +109,7 @@ class KnowledgePreloadSettings:
 def load_knowledge_preload_settings() -> KnowledgePreloadSettings:
     return KnowledgePreloadSettings(
         pdf=_env_bool("PRELOAD_PDF_KNOWLEDGE", True),
-        website=_env_bool("PRELOAD_WEBSITE_KNOWLEDGE", False),
+        website=_env_bool("PRELOAD_WEBSITE_KNOWLEDGE", True),
     )
 
 
@@ -122,6 +122,7 @@ class AgentConfig:
     instructions: str
     no_results_message: str
     knowledge_not_ready_message: str
+    invalid_search_query_message: str
     website_knowledge_path: Path
     pdf_knowledge_path: Path
     properties_path: Path
@@ -183,6 +184,10 @@ def load_agent_config(
         knowledge_not_ready_message=raw.get(
             "agent.knowledge_not_ready_message",
             "I'm sorry, but my knowledge base is not ready yet. Please try again in a moment.",
+        ),
+        invalid_search_query_message=raw.get(
+            "agent.invalid_search_query_message",
+            "Please ask a complete question with a few words so I can search accurately.",
         ),
         website_knowledge_path=client_website_knowledge_path(client_id),
         pdf_knowledge_path=client_pdf_knowledge_path(client_id),

@@ -67,7 +67,7 @@ Copy `.env.example` to `.env.local` and fill in the required values. At minimum 
 | `DEFAULT_CLIENT_ID` | Fallback tenant for console/dev when no SIP call |
 | `OPENAI_API_KEY` | Embeddings for knowledge base search (optional but recommended) |
 | `PRELOAD_PDF_KNOWLEDGE` | Preload PDF index at call connect (`true` default) |
-| `PRELOAD_WEBSITE_KNOWLEDGE` | Preload website index at call connect (`false` default; ~60MB) |
+| `PRELOAD_WEBSITE_KNOWLEDGE` | Preload website index at call connect (`true` default; ~60MB) |
 
 Example `.env.local`:
 
@@ -80,7 +80,7 @@ LIVEKIT_API_SECRET=...
 OPENAI_API_KEY=...
 EMBEDDING_MODEL=text-embedding-3-small
 PRELOAD_PDF_KNOWLEDGE=true
-PRELOAD_WEBSITE_KNOWLEDGE=false
+PRELOAD_WEBSITE_KNOWLEDGE=true
 ```
 
 Simulate a tenant locally without SIP:
@@ -281,7 +281,7 @@ The deploy workflow runs `lk agent deploy` with:
 - `DEFAULT_CLIENT_ID=client-1`
 - `EMBEDDING_MODEL`
 - `PRELOAD_PDF_KNOWLEDGE` (optional, default `true`)
-- `PRELOAD_WEBSITE_KNOWLEDGE` (optional, default `false`; set `true` for faster financial Q&A)
+- `PRELOAD_WEBSITE_KNOWLEDGE` (optional, default `true`; set `false` to save memory)
 
 For **local deploys to LiveKit Cloud**, pass the same secrets explicitly or query embeddings will fail at runtime:
 

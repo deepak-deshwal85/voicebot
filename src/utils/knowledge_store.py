@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -14,7 +15,11 @@ logger = logging.getLogger(__name__)
 
 SourceName = Literal["website", "pdf"]
 _SNIPPET_MAX_CHARS = 320
-_TOP_K_DEFAULT = 3
+_TOP_K_DEFAULT = 2
+
+
+def _tokenize(text: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", text.lower()))
 
 
 def _load_documents(path: Path) -> list[dict[str, Any]]:
@@ -104,23 +109,31 @@ class _SourcePool:
         if not await self.ensure_loaded() or not self.documents:
             return []
 
+        keyword_results = self._search_keywords(query, top_k=top_k)
+        if keyword_results:
+            return keyword_results
+
         if any(doc.get("embedding") for doc in self.documents):
             results = await self._search_embeddings(query, top_k=top_k)
             if results:
                 return results
             logger.warning(
-                "Embedding search returned no %s results; falling back to keywords.",
+                "Embedding search returned no %s results for query %r.",
                 self.source,
+                query,
             )
 
-        return self._search_keywords(query, top_k=top_k)
+        return []
 
     def _search_keywords(self, query: str, top_k: int) -> list[dict[str, Any]]:
-        query_words = set(query.lower().split())
+        query_words = _tokenize(query)
+        if not query_words:
+            return []
+
         scored: list[tuple[int, dict[str, Any]]] = []
 
         for doc in self.documents:
-            doc_words = set(doc["text"].lower().split())
+            doc_words = _tokenize(doc["text"])
             score = len(query_words.intersection(doc_words))
             if score <= 0:
                 continue
