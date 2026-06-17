@@ -29,28 +29,39 @@ def _clients_arg(clients: list[str] | None) -> list[str]:
 
 async def cmd_build(client_id: str, max_pages: int | None) -> None:
     config = load_agent_config(client_id=client_id)
-    output = await KnowledgeBuilder(config).build(max_pages=max_pages)
-    print(f"Built {output}")
+    website_path, pdf_path = await KnowledgeBuilder(config).build(max_pages=max_pages)
+    print(f"Built website={website_path} pdf={pdf_path}")
 
 
 async def cmd_validate(client_id: str) -> bool:
     config = load_agent_config(client_id=client_id)
     issues: list[str] = []
 
-    if not config.knowledge_path.exists():
-        issues.append(f"Missing knowledge file: {config.knowledge_path}")
+    has_website = config.website_knowledge_path.exists()
+    has_pdf = config.pdf_knowledge_path.exists()
+    if not has_website and not has_pdf:
+        issues.append(f"Missing knowledge files for {client_id}")
 
     store = KnowledgeStore(config)
     await store.initialize()
+    await store.website.ensure_loaded()
+    await store.pdf.ensure_loaded()
 
-    if not store.documents:
+    website_count = len(store.website.documents)
+    pdf_count = len(store.pdf.documents)
+    if website_count == 0 and pdf_count == 0:
         issues.append("Knowledge base is empty")
-    elif not any(doc.get("embedding") for doc in store.documents):
+
+    website_embedded = any(doc.get("embedding") for doc in store.website.documents)
+    pdf_embedded = any(doc.get("embedding") for doc in store.pdf.documents)
+    if (website_count and not website_embedded) or (pdf_count and not pdf_embedded):
         issues.append("No embeddings found; rebuild with OPENAI_API_KEY set")
 
     print(f"Client: {client_id}")
-    print(f"Knowledge: {config.knowledge_path}")
-    print(f"Chunks: {len(store.documents)}")
+    print(
+        f"Website knowledge: {config.website_knowledge_path} ({website_count} chunks)"
+    )
+    print(f"PDF knowledge: {config.pdf_knowledge_path} ({pdf_count} chunks)")
 
     if issues:
         print("Issues:")
@@ -63,34 +74,37 @@ async def cmd_validate(client_id: str) -> bool:
 
 
 async def cmd_search(client_id: str, query: str, top_k: int) -> None:
+    from utils.knowledge_router import route_knowledge_source
+
     config = load_agent_config(client_id=client_id)
     store = KnowledgeStore(config)
     await store.initialize()
-    results = await store.search(query, top_k=top_k)
+    source = route_knowledge_source(query)
+    print(f"Route: {source}")
+    results = await store.search_routed(query, source=source, top_k=top_k)
     if not results:
         print("No results.")
         return
-    for index, result in enumerate(results, start=1):
-        score = result.get("score")
-        suffix = f" score={score:.3f}" if isinstance(score, float) else ""
-        print(f"{index}. [{result.get('source', 'unknown')}]{suffix}")
-        print(result.get("text", "").strip())
-        print()
+    print(results)
 
 
 def main() -> int:
     _load_env()
 
-    parser = argparse.ArgumentParser(description="Manage config/{client}.json knowledge bases")
+    parser = argparse.ArgumentParser(
+        description="Manage config/{client}-website.json and {client}-pdf.json knowledge bases"
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("list-clients", help="List configured clients")
 
-    build = sub.add_parser("build", help="Build website+PDF knowledge into config/{client}.json")
+    build = sub.add_parser(
+        "build", help="Build website+PDF knowledge into split config files"
+    )
     build.add_argument("--client", action="append", dest="clients")
     build.add_argument("--max-pages", type=int)
 
-    validate = sub.add_parser("validate", help="Validate config/{client}.json")
+    validate = sub.add_parser("validate", help="Validate split knowledge files")
     validate.add_argument("--client", action="append", dest="clients")
 
     search = sub.add_parser("search", help="Test retrieval")
@@ -103,7 +117,10 @@ def main() -> int:
     if args.command == "list-clients":
         for client_id in list_client_ids():
             config = load_agent_config(client_id=client_id)
-            print(f"{client_id}: {config.website_name} -> {config.knowledge_path.name}")
+            print(
+                f"{client_id}: {config.website_name} -> "
+                f"{config.website_knowledge_path.name}, {config.pdf_knowledge_path.name}"
+            )
         return 0
 
     if args.command == "search":

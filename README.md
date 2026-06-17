@@ -66,6 +66,8 @@ Copy `.env.example` to `.env.local` and fill in the required values. At minimum 
 | `AGENT_NAME` | Worker name registered with LiveKit (`telephone-agent`) |
 | `DEFAULT_CLIENT_ID` | Fallback tenant for console/dev when no SIP call |
 | `OPENAI_API_KEY` | Embeddings for knowledge base search (optional but recommended) |
+| `PRELOAD_PDF_KNOWLEDGE` | Preload PDF index at call connect (`true` default) |
+| `PRELOAD_WEBSITE_KNOWLEDGE` | Preload website index at call connect (`false` default; ~60MB) |
 
 Example `.env.local`:
 
@@ -77,6 +79,8 @@ LIVEKIT_API_KEY=...
 LIVEKIT_API_SECRET=...
 OPENAI_API_KEY=...
 EMBEDDING_MODEL=text-embedding-3-small
+PRELOAD_PDF_KNOWLEDGE=true
+PRELOAD_WEBSITE_KNOWLEDGE=false
 ```
 
 Simulate a tenant locally without SIP:
@@ -100,41 +104,57 @@ All client files live in a single `config/` folder:
 
 ```text
 config/
-├── tenant-map.json       # phone number -> client id
-├── client-1.properties   # prompts and build settings
-├── client-1.json         # combined website + PDF knowledge base
+├── tenant-map.json           # phone number -> client id
+├── client-1.properties       # prompts and build settings
+├── client-1-website.json     # website index (runtime, lazy-loaded)
+├── client-1-pdf.json         # PDF index (runtime, lazy-loaded)
 ├── client-2.properties
-└── client-2.json
+├── client-2-website.json
+└── client-2-pdf.json
 ```
 
-Phone routing uses `config/tenant-map.json`. Knowledge bases are built **outside** the agent:
+Phone routing uses `config/tenant-map.json`. Knowledge bases are built **outside** the agent and loaded **on demand** at runtime through search tools:
+
+- Financial services, products, fees → `search_website_docs`
+- Personal info, education, projects, skills, resume → `search_document_library`
 
 ```bash
 uv run python scripts/knowledge.py build --client client-1
 uv run python scripts/knowledge.py validate --client client-1
+uv run python scripts/knowledge.py search --client client-1 "pension transfer"
+uv run python scripts/knowledge.py search --client client-1 "what skills are on the resume?"
 ```
 
 PDFs for building go in `knowledge-sources/client-1/` (not loaded at runtime).
 
 ## Knowledge base utility
 
-Knowledge is managed **outside** the voice agent with `scripts/knowledge.py`:
+Knowledge is managed **outside** the voice agent with `scripts/knowledge.py`. The `build` command writes two files per client:
+
+| File | Purpose |
+|------|---------|
+| `config/{client}-website.json` | Website-only index used by `search_website_docs` |
+| `config/{client}-pdf.json` | PDF-only index used by `search_document_library` |
+
+At runtime the agent loads only the index it needs (for example, PDF questions load the small PDF file, not the full website store).
 
 ```bash
 # List clients
 uv run python scripts/knowledge.py list-clients
 
-# Build combined knowledge base (website + PDFs) for one client
+# Build website + PDF knowledge bases for one client
 uv run python scripts/knowledge.py build --client client-1 --max-pages 100
 
-# Validate before deploy
+# Validate website and PDF indexes before deploy
 uv run python scripts/knowledge.py validate --client client-1
 
-# Test retrieval
+# Test routed retrieval (prints route: website | pdf | both)
 uv run python scripts/knowledge.py search --client client-1 "pension transfer" --top-k 3
+uv run python scripts/knowledge.py search --client client-1 "what skills are on the resume?" --top-k 3
 
-# Build for all clients (no --client flag)
+# Build for all clients (omit --client)
 uv run python scripts/knowledge.py build --max-pages 100
+uv run python scripts/knowledge.py validate
 ```
 
 Task shortcuts:
@@ -145,7 +165,7 @@ task refresh-knowledge CLIENT=client-1
 task kb-validate CLIENT=client-2
 ```
 
-Rebuild knowledge after changing PDFs or website content, then restart the agent.
+Rebuild knowledge after changing PDFs or website content, then redeploy the agent worker.
 
 ## Run the agent
 
@@ -239,14 +259,20 @@ Add these under **Settings → Secrets and variables → Actions**:
 2. Choose `client` (`client-1`, `client-2`, or `all`)
 3. Set `max_pages` for website crawl (default `100`)
 
-The updated `config/client-*.json` files are committed and pushed back to the repo by the workflow.
+The updated `config/client-*-website.json` and `config/client-*-pdf.json` files are committed and pushed back to the repo by the workflow.
 
 ### Deploy the agent worker
 
 1. Ensure `livekit.toml` is **committed to git** (must contain your agent `id`).
-2. Ensure knowledge stores are built for all tenants (`knowledge.py validate --client client-1`).
+2. Ensure split knowledge stores exist for all tenants:
+   ```bash
+   uv run python scripts/knowledge.py validate --client client-1
+   uv run python scripts/knowledge.py validate --client client-2
+   ```
 3. Add GitHub secrets: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `OPENAI_API_KEY`.
 4. Open **Actions → Deploy Agent → Run workflow**.
+
+Use `lk agent deploy`, not `lk agent create`, if `livekit.toml` already contains an agent id.
 
 The deploy workflow runs `lk agent deploy` with:
 
@@ -254,18 +280,22 @@ The deploy workflow runs `lk agent deploy` with:
 - `AGENT_NAME=telephone-agent`
 - `DEFAULT_CLIENT_ID=client-1`
 - `EMBEDDING_MODEL`
+- `PRELOAD_PDF_KNOWLEDGE` (optional, default `true`)
+- `PRELOAD_WEBSITE_KNOWLEDGE` (optional, default `false`; set `true` for faster financial Q&A)
 
-For **local deploys to LiveKit Cloud**, pass the same secrets explicitly or query embeddings will fail at runtime and PDF retrieval will not work even though `config/client-1.json` contains PDF chunks:
+For **local deploys to LiveKit Cloud**, pass the same secrets explicitly or query embeddings will fail at runtime:
 
 ```bash
 lk agent deploy \
   --secrets "OPENAI_API_KEY=$OPENAI_API_KEY" \
   --secrets "AGENT_NAME=telephone-agent" \
   --secrets "DEFAULT_CLIENT_ID=client-1" \
-  --secrets "EMBEDDING_MODEL=text-embedding-3-small"
+  --secrets "EMBEDDING_MODEL=text-embedding-3-small" \
+  --secrets "PRELOAD_PDF_KNOWLEDGE=true" \
+  --secrets "PRELOAD_WEBSITE_KNOWLEDGE=true"
 ```
 
-After deploy, confirm the runtime log shows `query_embeddings=enabled` and `pdf=...` when the knowledge base loads.
+After deploy, place a test call and confirm logs show tool searches such as `Website search for:` or `PDF search for:` when you ask a question.
 
 For **self-hosted workers on Oracle Cloud**, build and run the Docker image directly instead of `lk agent deploy`. See [docs/multi-tenant-telephony.md](docs/multi-tenant-telephony.md).
 
@@ -283,11 +313,13 @@ Once you've started your own project based on this repo, you should:
 
 This project includes a working `Dockerfile` for a **multi-tenant** worker (all client configs and knowledge stores in one image). For LiveKit Cloud-hosted workers, use the **Deploy Agent** GitHub workflow. For Oracle Cloud or other self-hosted infra, run the Docker container with `--env-file .env.local`. See [docs/multi-tenant-telephony.md](docs/multi-tenant-telephony.md).
 
-Before deploying, refresh and validate the client's knowledge base:
+Before deploying, refresh and validate the client's knowledge bases:
 
 ```bash
 uv run python scripts/knowledge.py build --client client-1 --max-pages 100
 uv run python scripts/knowledge.py validate --client client-1
+uv run python scripts/knowledge.py search --client client-1 "pension transfer"
+uv run python scripts/knowledge.py search --client client-1 "what skills are on the resume?"
 ```
 
 ## Self-hosted LiveKit

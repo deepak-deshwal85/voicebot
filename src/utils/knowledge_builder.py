@@ -13,7 +13,11 @@ import requests
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 
-from utils.config import AgentConfig, client_knowledge_path
+from utils.config import (
+    AgentConfig,
+    client_pdf_knowledge_path,
+    client_website_knowledge_path,
+)
 from utils.embeddings import EmbeddingService
 
 logger = logging.getLogger(__name__)
@@ -28,7 +32,7 @@ class KnowledgeBuilder:
         self.scraped_pages: set[str] = set()
         self.embeddings = EmbeddingService(model=config.embedding_model)
 
-    async def build(self, *, max_pages: int | None = None) -> Path:
+    async def build(self, *, max_pages: int | None = None) -> tuple[Path, Path]:
         page_limit = max_pages or self.config.max_pages
         self.documents = []
 
@@ -36,18 +40,42 @@ class KnowledgeBuilder:
         await self._ingest_pdfs()
         await self._compute_embeddings()
 
-        output = client_knowledge_path(self.config.client_id)
-        payload = {
+        website_docs = [
+            doc
+            for doc in self.documents
+            if doc.get("metadata", {}).get("source") == "website"
+        ]
+        pdf_docs = [
+            doc
+            for doc in self.documents
+            if doc.get("metadata", {}).get("source") == "pdf"
+        ]
+        built_at = datetime.now(timezone.utc).isoformat()
+        metadata = {
             "version": self.STORE_VERSION,
             "client_id": self.config.client_id,
             "website_url": self.config.website_url,
             "embedding_model": self.config.embedding_model,
-            "built_at": datetime.now(timezone.utc).isoformat(),
-            "documents": self.documents,
+            "built_at": built_at,
         }
-        output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        logger.info("Wrote %s chunks to %s", len(self.documents), output)
-        return output
+        website_path = client_website_knowledge_path(self.config.client_id)
+        pdf_path = client_pdf_knowledge_path(self.config.client_id)
+        website_path.write_text(
+            json.dumps({**metadata, "source": "website", "documents": website_docs}, indent=2),
+            encoding="utf-8",
+        )
+        pdf_path.write_text(
+            json.dumps({**metadata, "source": "pdf", "documents": pdf_docs}, indent=2),
+            encoding="utf-8",
+        )
+        logger.info(
+            "Wrote website=%s (%s chunks) pdf=%s (%s chunks)",
+            website_path,
+            len(website_docs),
+            pdf_path,
+            len(pdf_docs),
+        )
+        return website_path, pdf_path
 
     async def _scrape_website(self, max_pages: int) -> None:
         urls = [self.config.website_url]
@@ -105,7 +133,9 @@ class KnowledgeBuilder:
             if source == "website":
                 metadata.update({"type": "website_content", "url": url})
             else:
-                metadata.update({"type": "pdf_content", "filename": filename, "path": path})
+                metadata.update(
+                    {"type": "pdf_content", "filename": filename, "path": path}
+                )
             self.documents.append({"text": chunk, "metadata": metadata})
 
     async def _compute_embeddings(self) -> None:

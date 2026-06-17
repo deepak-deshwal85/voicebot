@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from utils.config import load_agent_config
+import pytest
+
+from utils.config import load_agent_config, load_knowledge_preload_settings
 
 
 def test_load_agent_config_defaults(tmp_path: Path) -> None:
@@ -24,7 +26,8 @@ def test_load_agent_config_defaults(tmp_path: Path) -> None:
     assert config.website_url == "https://acme.example/"
     assert config.initial_greeting == "Welcome to Acme Corp."
     assert "Acme Corp" in config.instructions
-    assert config.knowledge_path.name.endswith(".json")
+    assert config.website_knowledge_path.name.endswith("-website.json")
+    assert config.pdf_knowledge_path.name.endswith("-pdf.json")
 
 
 def test_multiline_instructions_are_unescaped(tmp_path: Path) -> None:
@@ -39,3 +42,25 @@ def test_multiline_instructions_are_unescaped(tmp_path: Path) -> None:
     config = load_agent_config(properties_path=properties)
     assert "Line one." in config.instructions
     assert "Line two for Demo." in config.instructions
+
+
+def test_knowledge_preload_settings_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PRELOAD_PDF_KNOWLEDGE", raising=False)
+    monkeypatch.delenv("PRELOAD_WEBSITE_KNOWLEDGE", raising=False)
+
+    settings = load_knowledge_preload_settings()
+    assert settings.pdf is True
+    assert settings.website is False
+
+
+def test_knowledge_preload_settings_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PRELOAD_PDF_KNOWLEDGE", "false")
+    monkeypatch.setenv("PRELOAD_WEBSITE_KNOWLEDGE", "true")
+
+    settings = load_knowledge_preload_settings()
+    assert settings.pdf is False
+    assert settings.website is True

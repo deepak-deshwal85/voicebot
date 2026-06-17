@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import re
+from collections.abc import Awaitable
 
 from dotenv import load_dotenv
 from livekit.agents import (
@@ -14,6 +15,7 @@ from livekit.agents import (
     MetricsCollectedEvent,
     RoomInputOptions,
     RunContext,
+    StopResponse,
     WorkerOptions,
     cli,
     function_tool,
@@ -23,7 +25,13 @@ from livekit.agents import (
 from livekit.plugins import noise_cancellation, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
-from utils.config import AgentConfig, load_agent_config, load_worker_settings
+from utils.config import (
+    AgentConfig,
+    load_agent_config,
+    load_knowledge_preload_settings,
+    load_worker_settings,
+)
+from utils.knowledge_router import route_knowledge_source
 from utils.knowledge_store import KnowledgeStore
 from utils.tenant import (
     coerce_phone_value,
@@ -38,6 +46,9 @@ load_dotenv(".env")
 load_dotenv(".env.local", override=True)
 
 WORKER_SETTINGS = load_worker_settings()
+PRELOAD_SETTINGS = load_knowledge_preload_settings()
+
+_store_cache: dict[str, KnowledgeStore] = {}
 
 _GREETING_WORDS = {
     "good",
@@ -63,6 +74,19 @@ _QUESTION_STARTERS = {
     "who",
     "why",
 }
+_IGNORE_TRANSCRIPT_PHRASES = (
+    "put your call on hold",
+    "stay on the line",
+    "please hold",
+    "please stay on the line",
+    "your call is important",
+    "all representatives are busy",
+    "estimated wait time",
+    "press 1",
+    "press one",
+    "this call may be recorded",
+    "for quality assurance",
+)
 
 
 def _is_greeting_only(text: str) -> bool:
@@ -74,146 +98,181 @@ def _is_greeting_only(text: str) -> bool:
     return all(word in _GREETING_WORDS for word in words)
 
 
+def _should_ignore_transcript(text: str) -> bool:
+    normalized = text.lower().strip()
+    if len(normalized) < 3:
+        return True
+    return any(phrase in normalized for phrase in _IGNORE_TRANSCRIPT_PHRASES)
+
+
 class Assistant(Agent):
-    def __init__(self, config: AgentConfig) -> None:
+    def __init__(self, config: AgentConfig, *, is_telephony: bool = False) -> None:
         super().__init__(instructions=config.instructions)
         self.config = config
+        self.is_telephony = is_telephony
         self.vector_store: KnowledgeStore | None = None
         self.is_first_interaction = True
-        self._initializing = False
+        self._greeting_spoken = False
 
-    async def _ensure_vector_store(self) -> bool:
+    async def _get_store(self) -> KnowledgeStore | None:
         if self.vector_store is not None:
-            return True
+            return self.vector_store
 
-        if self._initializing:
-            return False
+        cached = _store_cache.get(self.config.client_id)
+        if cached is not None:
+            self.vector_store = cached
+            return cached
 
-        self._initializing = True
+        store = KnowledgeStore(self.config)
         try:
-            logger.info(
-                "Loading knowledge store for client %s...",
-                self.config.client_id,
-            )
-            self.vector_store = KnowledgeStore(self.config)
-            await asyncio.wait_for(self.vector_store.initialize(), timeout=60)
-            logger.info("Knowledge store loaded successfully.")
-            return True
+            await asyncio.wait_for(store.initialize(), timeout=30)
         except asyncio.TimeoutError:
-            logger.error("Knowledge store load timed out.")
-            self.vector_store = None
-            return False
-        except Exception as exc:
-            logger.error("Failed to load knowledge store: %s", exc, exc_info=True)
-            self.vector_store = None
-            return False
-        finally:
-            self._initializing = False
+            logger.error(
+                "Knowledge index setup timed out for %s", self.config.client_id
+            )
+            return None
 
-    async def on_session_started(self, session: AgentSession) -> None:
-        await super().on_session_started(session)
-        await self._ensure_vector_store()
+        _store_cache[self.config.client_id] = store
+        self.vector_store = store
+        return store
+
+    async def preload_knowledge(
+        self, *, preload_pdf: bool, preload_website: bool
+    ) -> None:
+        """Warm configured knowledge indexes at call start without blocking the greeting."""
+        if not preload_pdf and not preload_website:
+            return
+
+        try:
+            store = await self._get_store()
+            if store is None:
+                return
+
+            names: list[str] = []
+            coros: list[Awaitable[bool]] = []
+            if preload_pdf:
+                names.append("pdf")
+                coros.append(store.preload_pdf())
+            if preload_website:
+                names.append("website")
+                coros.append(store.preload_website())
+
+            results = await asyncio.gather(*coros, return_exceptions=True)
+            for name, result in zip(names, results, strict=True):
+                if isinstance(result, Exception):
+                    logger.exception(
+                        "%s preload failed for %s", name, self.config.client_id
+                    )
+                    continue
+                if not result:
+                    continue
+
+                chunk_count = (
+                    len(store.pdf.documents)
+                    if name == "pdf"
+                    else len(store.website.documents)
+                )
+                logger.info(
+                    "Preloaded %s knowledge for %s (%s chunks)",
+                    name,
+                    self.config.client_id,
+                    chunk_count,
+                )
+        except Exception:
+            logger.exception("Knowledge preload failed for %s", self.config.client_id)
+
+    def _speak_greeting(self) -> None:
+        if self._greeting_spoken:
+            return
+        self._greeting_spoken = True
+        self.is_first_interaction = False
+        self.session.say(
+            self.config.initial_greeting,
+            allow_interruptions=True,
+        )
+
+    async def on_enter(self) -> None:
+        if self.is_telephony:
+            self._speak_greeting()
 
     async def on_user_turn_completed(
         self,
         turn_ctx: ChatContext,
         new_message: ChatMessage,
     ) -> None:
-        try:
-            query = new_message.text_content
+        query = new_message.text_content
 
-            if self.is_first_interaction:
-                self.is_first_interaction = False
-                if not query or _is_greeting_only(query):
-                    turn_ctx.add_message(
-                        role="assistant",
-                        content=self.config.initial_greeting,
-                    )
-                    return
+        if not query or _should_ignore_transcript(query):
+            logger.info("Ignoring non-user transcript: %r", query)
+            raise StopResponse()
 
-            if not await self._ensure_vector_store():
-                logger.error("Knowledge store not initialized")
-                turn_ctx.add_message(
-                    role="assistant",
-                    content=self.config.knowledge_not_ready_message,
-                )
-                return
+        if self.is_first_interaction and _is_greeting_only(query):
+            self._speak_greeting()
+            raise StopResponse()
 
-            if not query:
-                return
-
-            results = await self.vector_store.search(query, top_k=5)
-            if not results:
-                logger.info("No relevant information found for query: %s", query)
-                turn_ctx.add_message(
-                    role="assistant",
-                    content=self.config.no_results_message,
-                )
-                return
-
-            sources = [r.get("source", "unknown") for r in results]
-            logger.info("RAG results for %r: sources=%s", query, sources)
-
-            context_lines = []
-            for doc in results:
-                text = doc.get("text", "").strip()
-                if not text:
-                    continue
-                source = doc.get("source", "knowledge base")
-                filename = doc.get("filename")
-                if source == "pdf" and filename:
-                    label = f"pdf:{filename}"
-                elif source == "website":
-                    label = "website"
-                else:
-                    label = source
-                context_lines.append(f"[{label}] {text}")
-
-            turn_ctx.add_message(
-                role="assistant",
-                content=(
-                    f"Use the following {self.config.website_name} knowledge base "
-                    f"context (website pages and uploaded PDF documents) to answer "
-                    f"the user concisely. If PDF context is relevant, use it:\n"
-                    + "\n".join(f"• {line}" for line in context_lines)
-                ),
-            )
-        except Exception as exc:
-            logger.error("Error handling user message: %s", exc, exc_info=True)
-            turn_ctx.add_message(
-                role="assistant",
-                content=(
-                    f"I apologize, but I encountered an error while accessing "
-                    f"{self.config.website_name} information. Please try again."
-                ),
-            )
+        if self.is_first_interaction:
+            self.is_first_interaction = False
 
     @function_tool()
-    async def search_knowledge_base(
-        self,
-        context: RunContext,
-        query: str,
-        top_k: int = 3,
-    ):
-        """Search the pre-built knowledge base containing website and document content.
+    async def search_website_docs(self, context: RunContext, query: str) -> str:
+        """Search the official website index for financial services, products, fees, and company information.
+
+        Use this for questions about investments, pensions, ISAs, SIPPs, funds, accounts,
+        transfers, fees, and other financial services.
 
         Args:
-            query: The search query
-            top_k: Number of top results to return (default: 3)
+            query: Short search query based on the user's question.
         """
-        if not await self._ensure_vector_store():
+        store = await self._get_store()
+        if store is None:
             return self.config.knowledge_not_ready_message
 
-        logger.info("Searching knowledge base for: %s", query)
-        results = await self.vector_store.search(query, top_k)
+        logger.info("Website search for: %s", query)
+        results = await store.search_website(query)
         if not results:
             return self.config.no_results_message
+        return results
 
-        response = f"Here's what I found for {self.config.website_name}:\n\n"
-        for result in results:
-            source = result.get("source", "knowledge base")
-            response += f"[{source}] {result['text']}\n\n"
-        return response.strip()
+    @function_tool()
+    async def search_document_library(self, context: RunContext, query: str) -> str:
+        """Search uploaded PDF documents for personal information, education, projects, and skills.
+
+        Use this for questions about education, work experience, biography, projects,
+        skills, resumes, and document-specific content.
+
+        Args:
+            query: Short search query based on the user's question.
+        """
+        store = await self._get_store()
+        if store is None:
+            return self.config.knowledge_not_ready_message
+
+        logger.info("PDF search for: %s", query)
+        results = await store.search_pdf(query)
+        if not results:
+            return self.config.no_results_message
+        return results
+
+    @function_tool()
+    async def search_knowledge_base(self, context: RunContext, query: str) -> str:
+        """Search the best knowledge source when the question type is unclear.
+
+        Prefer search_website_docs for financial services questions and
+        search_document_library for personal, education, project, or skill questions.
+
+        Args:
+            query: Short search query based on the user's question.
+        """
+        store = await self._get_store()
+        if store is None:
+            return self.config.knowledge_not_ready_message
+
+        source = route_knowledge_source(query)
+        logger.info("Routed search for %r -> %s", query, source)
+        results = await store.search_routed(query, source=source)
+        if not results:
+            return self.config.no_results_message
+        return results
 
 
 def prewarm(proc: JobProcess):
@@ -276,6 +335,8 @@ async def entrypoint(ctx: JobContext):
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
         preemptive_generation=False,
+        min_endpointing_delay=0.5,
+        max_endpointing_delay=2.5,
     )
 
     usage_collector = metrics.UsageCollector()
@@ -291,9 +352,14 @@ async def entrypoint(ctx: JobContext):
 
     ctx.add_shutdown_callback(log_usage)
 
-    assistant = Assistant(config=agent_config)
-    logger.info("Preloading knowledge base for %s...", agent_config.client_id)
-    await assistant._ensure_vector_store()
+    assistant = Assistant(config=agent_config, is_telephony=bool(trunk_phone))
+    if PRELOAD_SETTINGS.pdf or PRELOAD_SETTINGS.website:
+        assistant._knowledge_preload_task = asyncio.create_task(
+            assistant.preload_knowledge(
+                preload_pdf=PRELOAD_SETTINGS.pdf,
+                preload_website=PRELOAD_SETTINGS.website,
+            )
+        )
 
     await session.start(
         agent=assistant,

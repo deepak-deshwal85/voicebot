@@ -48,7 +48,6 @@ RUN uv sync --locked
 COPY config/ ./config/
 COPY src/ ./src/
 COPY scripts/ ./scripts/
-COPY livekit.toml ./
 
 ENV AGENT_NAME=telephone-agent
 ENV DEFAULT_CLIENT_ID=client-1

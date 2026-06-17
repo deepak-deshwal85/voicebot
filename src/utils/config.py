@@ -49,8 +49,12 @@ def client_properties_path(client_id: str) -> Path:
     return path
 
 
-def client_knowledge_path(client_id: str) -> Path:
-    return CONFIG_DIR / f"{client_id}.json"
+def client_website_knowledge_path(client_id: str) -> Path:
+    return CONFIG_DIR / f"{client_id}-website.json"
+
+
+def client_pdf_knowledge_path(client_id: str) -> Path:
+    return CONFIG_DIR / f"{client_id}-pdf.json"
 
 
 def load_tenant_map() -> dict[str, str]:
@@ -89,6 +93,26 @@ def load_worker_settings() -> WorkerSettings:
     )
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+@dataclass(frozen=True)
+class KnowledgePreloadSettings:
+    pdf: bool
+    website: bool
+
+
+def load_knowledge_preload_settings() -> KnowledgePreloadSettings:
+    return KnowledgePreloadSettings(
+        pdf=_env_bool("PRELOAD_PDF_KNOWLEDGE", True),
+        website=_env_bool("PRELOAD_WEBSITE_KNOWLEDGE", False),
+    )
+
+
 @dataclass(frozen=True)
 class AgentConfig:
     client_id: str
@@ -98,7 +122,8 @@ class AgentConfig:
     instructions: str
     no_results_message: str
     knowledge_not_ready_message: str
-    knowledge_path: Path
+    website_knowledge_path: Path
+    pdf_knowledge_path: Path
     properties_path: Path
     pdf_folder: Path
     max_pages: int
@@ -124,7 +149,9 @@ def load_agent_config(
         )
         resolved_client_id = client_id or path.stem
     else:
-        resolved_client_id = client_id or os.getenv("DEFAULT_CLIENT_ID", DEFAULT_CLIENT_ID)
+        resolved_client_id = client_id or os.getenv(
+            "DEFAULT_CLIENT_ID", DEFAULT_CLIENT_ID
+        )
         path = client_properties_path(resolved_client_id)
 
     raw = _parse_properties(path.read_text(encoding="utf-8"))
@@ -157,7 +184,8 @@ def load_agent_config(
             "agent.knowledge_not_ready_message",
             "I'm sorry, but my knowledge base is not ready yet. Please try again in a moment.",
         ),
-        knowledge_path=client_knowledge_path(client_id),
+        website_knowledge_path=client_website_knowledge_path(client_id),
+        pdf_knowledge_path=client_pdf_knowledge_path(client_id),
         properties_path=path,
         pdf_folder=_resolve_path(
             raw.get("knowledge.pdf_folder", f"knowledge-sources/{client_id}")

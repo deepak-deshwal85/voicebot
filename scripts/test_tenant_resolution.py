@@ -24,12 +24,15 @@ def main() -> None:
         print("Mappings from config/tenant-map.json:")
         for digits, client_id in load_tenant_map().items():
             config = load_agent_config(client_id=client_id)
-            print(f"  {client_id}: +{digits} -> {config.knowledge_path.name}")
+            print(f"  {client_id}: +{digits} -> {config.website_knowledge_path.name}")
 
     if args.phone:
         client_id = resolve_client_id_for_phone(args.phone)
         config = load_agent_config(client_id=client_id)
-        print(f"\nPhone {args.phone!r} -> {client_id} ({config.knowledge_path})")
+        print(
+            f"\nPhone {args.phone!r} -> {client_id} "
+            f"({config.website_knowledge_path.name}, {config.pdf_knowledge_path.name})"
+        )
 
 
 if __name__ == "__main__":

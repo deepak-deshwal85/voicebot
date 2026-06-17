@@ -1,7 +1,11 @@
 import pytest
 from livekit.agents import AgentSession, inference, llm
 
-from agent import Assistant, _is_greeting_only
+from agent import (
+    Assistant,
+    _is_greeting_only,
+    _should_ignore_transcript,
+)
 from utils.config import load_agent_config
 
 
@@ -18,6 +22,14 @@ def test_first_turn_question_is_not_treated_as_greeting() -> None:
     assert _is_greeting_only("good morning")
     assert not _is_greeting_only("what was the disaster in Havana?")
     assert not _is_greeting_only("tell me about pensions")
+
+
+def test_ignores_carrier_hold_announcements() -> None:
+    assert _should_ignore_transcript(
+        "The person you are speaking with has put your call on hold. "
+        "Please stay on the line."
+    )
+    assert not _should_ignore_transcript("What was the disaster in Havana?")
 
 
 @pytest.mark.asyncio
