@@ -9,12 +9,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(SCRIPTS))
 
 from dotenv import load_dotenv  # noqa: E402
+from knowledge_builder import KnowledgeBuilder  # noqa: E402
 
 from utils.config import list_client_ids, load_agent_config  # noqa: E402
-from utils.knowledge_builder import KnowledgeBuilder  # noqa: E402
 from utils.knowledge_store import KnowledgeStore  # noqa: E402
 
 
@@ -73,15 +75,26 @@ async def cmd_validate(client_id: str) -> bool:
     return True
 
 
-async def cmd_search(client_id: str, query: str, top_k: int) -> None:
-    from utils.knowledge_router import route_knowledge_source
-
+async def cmd_search(
+    client_id: str, query: str, top_k: int, source: str
+) -> None:
     config = load_agent_config(client_id=client_id)
     store = KnowledgeStore(config)
     await store.initialize()
-    source = route_knowledge_source(query)
-    print(f"Route: {source}")
-    results = await store.search_routed(query, source=source, top_k=top_k)
+
+    print(f"Source: {source}")
+    if source == "website":
+        results = await store.search_website(query, top_k=top_k)
+    elif source == "pdf":
+        results = await store.search_pdf(query, top_k=top_k)
+    else:
+        website_results, pdf_results = await asyncio.gather(
+            store.search_website(query, top_k=top_k),
+            store.search_pdf(query, top_k=top_k),
+        )
+        parts = [part for part in (website_results, pdf_results) if part]
+        results = "\n\n".join(parts)
+
     if not results:
         print("No results.")
         return
@@ -111,6 +124,12 @@ def main() -> int:
     search.add_argument("--client", required=True)
     search.add_argument("query")
     search.add_argument("--top-k", type=int, default=3)
+    search.add_argument(
+        "--source",
+        choices=("website", "pdf", "both"),
+        default="both",
+        help="Knowledge pool to search (default: both)",
+    )
 
     args = parser.parse_args()
 
@@ -124,7 +143,7 @@ def main() -> int:
         return 0
 
     if args.command == "search":
-        asyncio.run(cmd_search(args.client, args.query, args.top_k))
+        asyncio.run(cmd_search(args.client, args.query, args.top_k, args.source))
         return 0
 
     exit_code = 0

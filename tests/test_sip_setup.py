@@ -1,6 +1,12 @@
+import sys
+from pathlib import Path
+
 import pytest
 
-from utils.sip_setup import load_tenant_trunk_specs
+SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+
+from sip_setup import load_tenant_trunk_specs  # noqa: E402
 
 
 def test_load_tenant_trunk_specs(monkeypatch: pytest.MonkeyPatch) -> None:

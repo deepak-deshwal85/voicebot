@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
-from utils.config import list_client_ids, load_tenant_map_by_client
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from utils.config import list_client_ids, load_tenant_map_by_client  # noqa: E402
 
 
 @dataclass(frozen=True)

@@ -16,15 +16,16 @@ async def main() -> None:
     config = load_agent_config(client_id="client-1")
     agent = Assistant(config=config)
 
-    success = await agent._ensure_vector_store()
-    if success and agent.vector_store:
-        print("Knowledge store initialized successfully")
-        print(f"Documents loaded: {len(agent.vector_store.documents)}")
-
-        results = await agent.vector_store.search("investment")
-        print(f"Search test: Found {len(results)} results for 'investment'")
-    else:
+    store = await agent._get_store()
+    if store is None:
         print("Knowledge store initialization failed")
+        return
+
+    print("Knowledge store initialized successfully")
+    print(f"Documents loaded: {len(store.documents)}")
+
+    results = await store.search_website("investment")
+    print(f"Search test: website results for 'investment': {bool(results)}")
 
 
 if __name__ == "__main__":

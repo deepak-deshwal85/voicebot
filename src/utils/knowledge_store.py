@@ -9,7 +9,6 @@ from typing import Any, Literal
 
 from utils.config import AgentConfig, load_agent_config
 from utils.embeddings import EmbeddingService, cosine_similarity
-from utils.knowledge_router import KnowledgeSource
 
 logger = logging.getLogger(__name__)
 
@@ -223,41 +222,3 @@ class KnowledgeStore:
     async def search_pdf(self, query: str, top_k: int = _TOP_K_DEFAULT) -> str:
         results = await self.pdf.search(query, top_k=top_k)
         return _format_results(results, "pdf")
-
-    async def search_routed(
-        self,
-        query: str,
-        source: KnowledgeSource,
-        top_k: int = _TOP_K_DEFAULT,
-    ) -> str:
-        if source == "website":
-            return await self.search_website(query, top_k=top_k)
-        if source == "pdf":
-            return await self.search_pdf(query, top_k=top_k)
-
-        website_results, pdf_results = await asyncio.gather(
-            self.website.search(query, top_k=max(1, top_k // 2)),
-            self.pdf.search(query, top_k=max(1, top_k // 2)),
-        )
-        merged = [*website_results, *pdf_results]
-        merged.sort(key=lambda item: item.get("score", 0), reverse=True)
-        return _format_results(merged[:top_k], "website")
-
-    async def search(
-        self, query: str, top_k: int = _TOP_K_DEFAULT
-    ) -> list[dict[str, Any]]:
-        from utils.knowledge_router import route_knowledge_source
-
-        source = route_knowledge_source(query)
-        if source == "website":
-            return await self.website.search(query, top_k=top_k)
-        if source == "pdf":
-            return await self.pdf.search(query, top_k=top_k)
-
-        website_results, pdf_results = await asyncio.gather(
-            self.website.search(query, top_k=max(1, top_k // 2)),
-            self.pdf.search(query, top_k=max(1, top_k // 2)),
-        )
-        merged = [*website_results, *pdf_results]
-        merged.sort(key=lambda item: item.get("score", 0), reverse=True)
-        return merged[:top_k]
